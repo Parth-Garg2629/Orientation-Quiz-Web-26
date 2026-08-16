@@ -1,0 +1,138 @@
+{
+  "title": "Technical Club Orientation Quiz 2026",
+  "description": "Fast-paced orientation quiz covering technology, logic, engineering, and club trivia.",
+  "questions": [
+    {
+      "text": "Which data structure uses LIFO (Last In, First Out) ordering?",
+      "options": ["Queue", "Stack", "Binary Tree", "Linked List"],
+      "correct": 1,
+      "timerSeconds": 25,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "What is the time complexity of searching for an element in a balanced Binary Search Tree?",
+      "options": ["O(1)", "O(n)", "O(log n)", "O(n log n)"],
+      "correct": 2,
+      "timerSeconds": 25,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "Which git command is used to record changes to the local repository?",
+      "options": ["git push", "git commit", "git pull", "git branch"],
+      "correct": 1,
+      "timerSeconds": 20,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "In networking, what does the HTTP status code 404 signify?",
+      "options": ["Unauthorized", "Server Error", "Not Found", "Bad Gateway"],
+      "correct": 2,
+      "timerSeconds": 20,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "Which of the following is NOT an open-source relational database management system?",
+      "options": ["PostgreSQL", "MySQL", "SQLite", "Oracle Database"],
+      "correct": 3,
+      "timerSeconds": 25,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "If a triangle has sides 3, 4, and 5, what is its area?",
+      "options": ["6", "10", "12", "7.5"],
+      "correct": 0,
+      "timerSeconds": 25,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "What does CSS stand for in web development?",
+      "options": ["Creative Style Sheets", "Cascading Style Sheets", "Computer System Syntax", "Colorful Styling Script"],
+      "correct": 1,
+      "timerSeconds": 20,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "Which algorithm is commonly used to find the shortest path in a graph with non-negative weights?",
+      "options": ["Dijkstra's Algorithm", "Kruskal's Algorithm", "Prim's Algorithm", "Floyd-Warshall Algorithm"],
+      "correct": 0,
+      "timerSeconds": 30,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "In computer architecture, what component performs arithmetic and logical operations?",
+      "options": ["Control Unit", "ALU", "Cache", "Register File"],
+      "correct": 1,
+      "timerSeconds": 20,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "What does API stand for?",
+      "options": ["Application Programming Interface", "Automated Protocol Integration", "Applied Program Instruction", "App Processing Internet"],
+      "correct": 0,
+      "timerSeconds": 20,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "What is the binary representation of the decimal number 13?",
+      "options": ["1011", "1101", "1110", "1001"],
+      "correct": 1,
+      "timerSeconds": 25,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "Which principle in OOP encourages hiding internal implementation details?",
+      "options": ["Inheritance", "Polymorphism", "Encapsulation", "Compilation"],
+      "correct": 2,
+      "timerSeconds": 25,
+      "points": 100,
+      "scoring": {
+        "timeWindow": 0.25,
+        "fullPointsWindow": true
+      }
+    }
+  ]
+}
