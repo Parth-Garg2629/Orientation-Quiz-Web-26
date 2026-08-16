@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: orientquiz-server
+    runtime: docker
+    dockerfilePath: Dockerfile
+    plan: standard
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: ADMIN_PASSCODE
+        sync: false
+      - key: DATABASE_PATH
+        value: /data/quiz.db
+      - key: CORS_ORIGIN
+        value: "*"
+    disk:
+      name: quiz-data
+      mountPath: /data
+      sizeGB: 1

@@ -1,0 +1,35 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "tsx src/tests/config.test.ts && tsx src/tests/teams.test.ts && tsx src/tests/scoring.test.ts && tsx src/tests/gameplay.test.ts && tsx src/tests/isolation.test.ts && tsx src/tests/reliability.test.ts",
+    "test:config": "tsx src/tests/config.test.ts",
+    "test:teams": "tsx src/tests/teams.test.ts",
+    "test:scoring": "tsx src/tests/scoring.test.ts",
+    "test:gameplay": "tsx src/tests/gameplay.test.ts",
+    "test:isolation": "tsx src/tests/isolation.test.ts",
+    "test:reliability": "tsx src/tests/reliability.test.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4",
+    "@orientquiz/shared": "*",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "tsx": "^4.16.2",
+    "typescript": "^5.4.5"
+  }
+}
