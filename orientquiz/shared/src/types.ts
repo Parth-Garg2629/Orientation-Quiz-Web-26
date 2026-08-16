@@ -1,4 +1,4 @@
-export type QuizStatus = "waiting" | "running" | "paused" | "completed" | "scored";
+export type QuizStatus = "waiting" | "starting" | "running" | "paused" | "completed" | "scored";
 
 export interface PublicQuestion {
   index: number;

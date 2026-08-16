@@ -5,6 +5,8 @@ import {
   AdminAuthSchema,
   AdminScoreOverrideSchema,
   ClientToServerEvents,
+  ProjectorDisplayPayload,
+  ProjectorMode,
   ServerToClientEvents,
   SOCKET_ROOMS,
   SubmitAnswerSchema,
@@ -14,6 +16,9 @@ import {
 } from "@orientquiz/shared";
 import { db } from "../db/index.js";
 import { QuizEngine } from "../quiz/engine.js";
+
+// Max devices per team (duo match, solo allowed)
+const MAX_DEVICES_PER_TEAM = 2;
 
 // Generate unambiguous 6-char team code (no 0/O, 1/I)
 const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -33,29 +38,64 @@ export function setupSocketHandlers(
 ) {
   // Socket -> teamId
   const socketTeamMap = new Map<string, string>();
-  // teamId -> active socketId
-  const teamSocketMap = new Map<string, string>();
+  // teamId -> Set of active socketIds (up to MAX_DEVICES_PER_TEAM)
+  const teamSocketMap = new Map<string, Set<string>>();
   // Admin socket IDs
   const adminSockets = new Set<string>();
-  // Session tokens issued to authenticated admin sockets with creation timestamps
-  // Token TTL is 12 hours. Explicit "admin:lock" immediately invalidates the token server-side.
+  // Current projector display state (persists until admin changes it)
+  let projectorState: ProjectorDisplayPayload = { mode: "blank" };
+  // Session tokens for admin reconnect (TTL 12h)
   const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
   const adminTokens = new Map<string, number>();
 
+  // Per-socket event rate limiting (events per second)
+  const socketEventCounts = new Map<string, { count: number; resetAt: number }>();
+  const RATE_LIMIT_MAX = 20; // max events per second per socket
+  const RATE_LIMIT_WINDOW_MS = 1000;
+
+  function checkRateLimit(socketId: string): boolean {
+    const now = Date.now();
+    const entry = socketEventCounts.get(socketId);
+    if (!entry || now > entry.resetAt) {
+      socketEventCounts.set(socketId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+      return true;
+    }
+    entry.count++;
+    if (entry.count > RATE_LIMIT_MAX) {
+      return false; // rate limited
+    }
+    return true;
+  }
+
   const isSocketAdmin = (socketId: string) => adminSockets.has(socketId);
 
+  // Debounced admin broadcast to avoid flooding on rapid state changes
+  let adminBroadcastTimer: NodeJS.Timeout | null = null;
   const broadcastAdminState = () => {
-    const onlineSocketIds = new Set(io.sockets.sockets.keys());
-    const adminState = quizEngine.getAdminQuizState(onlineSocketIds, teamSocketMap);
-    io.to(SOCKET_ROOMS.ADMIN).emit("admin:state", adminState);
-    io.to(SOCKET_ROOMS.ADMIN).emit("admin:roster", adminState.teams);
-    io.to(SOCKET_ROOMS.ADMIN).emit("admin:leaderboard", adminState.leaderboard);
+    if (adminBroadcastTimer) return;
+    adminBroadcastTimer = setTimeout(() => {
+      adminBroadcastTimer = null;
+      const onlineSocketIds = new Set(io.sockets.sockets.keys());
+      const adminState = quizEngine.getAdminQuizState(onlineSocketIds, teamSocketMap);
+      io.to(SOCKET_ROOMS.ADMIN).emit("admin:state", adminState);
+      io.to(SOCKET_ROOMS.ADMIN).emit("admin:roster", adminState.teams);
+      io.to(SOCKET_ROOMS.ADMIN).emit("admin:leaderboard", adminState.leaderboard);
+    }, 50);
   };
 
+  // Emit quiz state to all sockets belonging to a team
+  function emitToTeam(teamId: string, event: string, data: any) {
+    const sockets = teamSocketMap.get(teamId);
+    if (!sockets) return;
+    for (const sid of sockets) {
+      io.to(sid).emit(event as any, data);
+    }
+  }
+
   const broadcastTeamStates = () => {
-    for (const [teamId, socketId] of teamSocketMap.entries()) {
+    for (const [teamId] of teamSocketMap.entries()) {
       const state = quizEngine.getTeamQuizState(teamId);
-      io.to(socketId).emit("quiz:state", state);
+      emitToTeam(teamId, "quiz:state", state);
     }
   };
 
@@ -70,6 +110,15 @@ export function setupSocketHandlers(
       if (q) {
         io.to(SOCKET_ROOMS.BROADCAST).emit("quiz:question", q);
       }
+    },
+    onAnswerReveal: (questionIndex, correctOption) => {
+      io.to(SOCKET_ROOMS.BROADCAST).emit("quiz:answer_reveal", { questionIndex, correctOption });
+    },
+    onStarting: () => {
+      io.to(SOCKET_ROOMS.BROADCAST).emit("quiz:starting", {
+        startsInMs: 5000,
+        serverNow: Date.now(),
+      });
     },
   });
 
@@ -88,6 +137,15 @@ export function setupSocketHandlers(
   }, 10000);
 
   io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>) => {
+    // Middleware: rate limit all incoming events
+    socket.use(([event], next) => {
+      if (!checkRateLimit(socket.id)) {
+        socket.emit("error", { message: "Too many requests. Slow down.", code: "RATE_LIMIT" });
+        return; // drop event, don't call next
+      }
+      next();
+    });
+
     // ----------------------------------------------------
     // Admin Authentication
     // ----------------------------------------------------
@@ -102,7 +160,6 @@ export function setupSocketHandlers(
         socket.join(SOCKET_ROOMS.ADMIN);
         adminSockets.add(socket.id);
 
-        // Issue a cryptographically secure random session token with timestamp
         const token = crypto.randomUUID();
         adminTokens.set(token, Date.now());
 
@@ -138,7 +195,7 @@ export function setupSocketHandlers(
       return callback({ ok: true });
     });
 
-    // Admin explicit lock — revokes token and removes admin privileges server-side
+    // Admin explicit lock — revokes token
     socket.on("admin:lock", (data, callback) => {
       if (data?.token) {
         adminTokens.delete(data.token);
@@ -148,7 +205,33 @@ export function setupSocketHandlers(
       callback?.({ ok: true });
     });
 
+    // ----------------------------------------------------
+    // Projector Subscribe (read-only, no auth required)
+    // ----------------------------------------------------
+    socket.on("projector:subscribe", (callback) => {
+      socket.join(SOCKET_ROOMS.PROJECTOR);
+      // Send current projector state immediately on subscribe
+      callback?.({ ok: true, current: projectorState });
+      socket.emit("projector:display", projectorState);
+    });
 
+    // Admin push to projector
+    socket.on("admin:projector_display", (data, callback) => {
+      if (!isSocketAdmin(socket.id)) return callback?.({ ok: false, error: "Unauthorized" });
+
+      const mode: ProjectorMode = data.mode;
+      const leaderboard = quizEngine.getLeaderboard();
+      const winners = leaderboard.slice(0, 3);
+
+      projectorState = {
+        mode,
+        leaderboard: mode === "leaderboard" ? leaderboard : undefined,
+        winners: mode === "winners" ? winners : undefined,
+      };
+
+      io.to(SOCKET_ROOMS.PROJECTOR).emit("projector:display", projectorState);
+      callback?.({ ok: true });
+    });
 
     // ----------------------------------------------------
     // Team Creation
@@ -162,7 +245,6 @@ export function setupSocketHandlers(
         });
       }
 
-      // FIX #2: Block new team creation once quiz is no longer in waiting state
       const sessionStatus = quizEngine.getStatus();
       if (sessionStatus !== "waiting") {
         return callback({
@@ -174,7 +256,6 @@ export function setupSocketHandlers(
       const teamName = parsed.data.name;
       const nameLower = teamName.toLowerCase();
 
-      // Check uniqueness
       const existing = db.prepare("SELECT * FROM team WHERE name_lower = ?").get(nameLower);
       if (existing) {
         return callback({
@@ -183,7 +264,6 @@ export function setupSocketHandlers(
         });
       }
 
-      // Generate unique 6-char code
       let code = generateTeamCode();
       while (db.prepare("SELECT * FROM team WHERE code = ?").get(code)) {
         code = generateTeamCode();
@@ -195,9 +275,10 @@ export function setupSocketHandlers(
         VALUES (?, ?, ?, ?, 0, ?)
       `).run(teamId, teamName, nameLower, code, new Date().toISOString());
 
-      // Bind socket
+      // Register socket for this team
       socketTeamMap.set(socket.id, teamId);
-      teamSocketMap.set(teamId, socket.id);
+      const sockets = new Set<string>([socket.id]);
+      teamSocketMap.set(teamId, sockets);
 
       socket.join(SOCKET_ROOMS.team(teamId));
       socket.join(SOCKET_ROOMS.BROADCAST);
@@ -211,16 +292,14 @@ export function setupSocketHandlers(
 
       callback({ ok: true, session });
 
-      // Send initial quiz state to this team
       const teamState = quizEngine.getTeamQuizState(teamId);
       socket.emit("quiz:state", teamState);
 
-      // Notify admin
       broadcastAdminState();
     });
 
     // ----------------------------------------------------
-    // Team Join / Reconnect / Takeover
+    // Team Join / Reconnect / Duo Device
     // ----------------------------------------------------
     socket.on("team:join", (data, callback) => {
       const parsed = TeamJoinSchema.safeParse(data);
@@ -239,21 +318,32 @@ export function setupSocketHandlers(
       }
 
       const teamId = team.id;
-      const oldSocketId = teamSocketMap.get(teamId);
+      let sockets = teamSocketMap.get(teamId);
 
-      // Device Hard-Takeover
-      if (oldSocketId && oldSocketId !== socket.id) {
-        const oldSocket = io.sockets.sockets.get(oldSocketId);
-        if (oldSocket) {
-          oldSocket.emit("session:inactive", {
-            reason: "Session moved to another device with this team code.",
-          });
-          oldSocket.leave(SOCKET_ROOMS.team(teamId));
+      if (!sockets) {
+        sockets = new Set<string>();
+        teamSocketMap.set(teamId, sockets);
+      }
+
+      // Remove stale disconnected sockets from the set
+      for (const sid of sockets) {
+        if (!io.sockets.sockets.has(sid)) {
+          sockets.delete(sid);
         }
       }
 
+      // Enforce duo limit: max 2 active devices
+      if (sockets.size >= MAX_DEVICES_PER_TEAM && !sockets.has(socket.id)) {
+        // Reject the 3rd device with a clear callback error (don't emit session:inactive —
+        // that event is for kicking existing sessions, not rejecting new join attempts)
+        return callback({
+          ok: false,
+          error: "Team is full. Maximum 2 devices allowed per team.",
+        });
+      }
+
+      sockets.add(socket.id);
       socketTeamMap.set(socket.id, teamId);
-      teamSocketMap.set(teamId, socket.id);
 
       socket.join(SOCKET_ROOMS.team(teamId));
       socket.join(SOCKET_ROOMS.BROADCAST);
@@ -267,7 +357,6 @@ export function setupSocketHandlers(
 
       callback({ ok: true, session });
 
-      // Send current state
       const teamState = quizEngine.getTeamQuizState(teamId);
       socket.emit("quiz:state", teamState);
 
@@ -288,7 +377,6 @@ export function setupSocketHandlers(
         return callback?.({ ok: false, error: "Invalid submission format." });
       }
 
-      // FIX #4: Bounds-check selectedOption against the actual question options
       const currentQ = quizEngine.getCurrentQuestion();
       if (currentQ && parsed.data.selectedOption >= currentQ.options.length) {
         return callback?.({ ok: false, error: "Invalid option selection." });
@@ -301,15 +389,20 @@ export function setupSocketHandlers(
       );
 
       if (res.ok) {
-        socket.emit("quiz:locked", {
-          questionIndex: parsed.data.questionIndex,
-          optionIndex: parsed.data.selectedOption,
-          isWrong: !!res.isWrong,
-        });
-
-        // Sync team state
-        const teamState = quizEngine.getTeamQuizState(teamId);
-        socket.emit("quiz:state", teamState);
+        // Emit quiz:locked to ALL sockets of this team (both devices)
+        const teamSockets = teamSocketMap.get(teamId);
+        if (teamSockets) {
+          for (const sid of teamSockets) {
+            io.to(sid).emit("quiz:locked", {
+              questionIndex: parsed.data.questionIndex,
+              optionIndex: parsed.data.selectedOption,
+              isWrong: !!res.isWrong,
+            });
+            // Sync state to each device
+            const teamState = quizEngine.getTeamQuizState(teamId);
+            io.to(sid).emit("quiz:state", teamState);
+          }
+        }
 
         callback?.({ ok: true });
       } else {
@@ -365,10 +458,12 @@ export function setupSocketHandlers(
       if (!isSocketAdmin(socket.id)) return callback?.({ ok: false, error: "Unauthorized" });
       const teamId = data.teamId;
 
-      const activeSock = teamSocketMap.get(teamId);
-      if (activeSock) {
-        const sock = io.sockets.sockets.get(activeSock);
-        sock?.emit("session:inactive", { reason: "Your team was removed by the organizer." });
+      const teamSockets = teamSocketMap.get(teamId);
+      if (teamSockets) {
+        for (const sid of teamSockets) {
+          const sock = io.sockets.sockets.get(sid);
+          sock?.emit("session:inactive", { reason: "Your team was removed by the organizer." });
+        }
       }
 
       db.prepare("DELETE FROM team WHERE id = ?").run(teamId);
@@ -401,10 +496,9 @@ export function setupSocketHandlers(
       if (!isSocketAdmin(socket.id)) return callback?.({ ok: false, error: "Unauthorized" });
       const res = quizEngine.reset();
       if (res.ok) {
-        // Push WAITING state to all connected team sockets so they immediately go back to lobby
-        for (const [teamId, socketId] of teamSocketMap.entries()) {
+        for (const [teamId] of teamSocketMap.entries()) {
           const teamState = quizEngine.getTeamQuizState(teamId);
-          io.to(socketId).emit("quiz:state", teamState);
+          emitToTeam(teamId, "quiz:state", teamState);
         }
         broadcastAdminState();
       }
@@ -415,29 +509,35 @@ export function setupSocketHandlers(
       if (!isSocketAdmin(socket.id)) return callback?.({ ok: false, error: "Unauthorized" });
       const res = quizEngine.hardReset();
       if (res.ok) {
-        // All teams wiped — eject all active team sockets to landing
-        for (const [teamId, socketId] of teamSocketMap.entries()) {
-          io.to(socketId).emit("session:inactive", { reason: "Quiz has been fully reset by the organizer." });
+        for (const [teamId, sockets] of teamSocketMap.entries()) {
+          for (const sid of sockets) {
+            io.to(sid).emit("session:inactive", {
+              reason: "Quiz has been fully reset by the organizer.",
+            });
+          }
         }
         teamSocketMap.clear();
-        for (const [socketId, teamId] of socketTeamMap.entries()) {
-          socketTeamMap.delete(socketId);
-        }
+        socketTeamMap.clear();
         broadcastAdminState();
       }
       callback?.(res);
     });
 
-
     // ----------------------------------------------------
     // Disconnect
     // ----------------------------------------------------
     socket.on("disconnect", () => {
+      socketEventCounts.delete(socket.id);
+
       const teamId = socketTeamMap.get(socket.id);
       if (teamId) {
         socketTeamMap.delete(socket.id);
-        if (teamSocketMap.get(teamId) === socket.id) {
-          teamSocketMap.delete(teamId);
+        const sockets = teamSocketMap.get(teamId);
+        if (sockets) {
+          sockets.delete(socket.id);
+          if (sockets.size === 0) {
+            teamSocketMap.delete(teamId);
+          }
         }
         broadcastAdminState();
       }

@@ -14,7 +14,6 @@ export const Landing: React.FC = () => {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    // Check if team code is in localStorage
     const savedCode = localStorage.getItem("orientquiz_team_code");
     if (savedCode) {
       navigate("/team");
@@ -56,7 +55,17 @@ export const Landing: React.FC = () => {
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!teamCode.trim()) return;
+    const code = teamCode.trim().toUpperCase();
+    if (!code) return;
+
+    // RBAC: "ADMIN1" is the secret trigger to access the admin panel
+    if (code === "ADMIN1") {
+      // Set a sessionStorage flag so the admin page knows access was granted
+      sessionStorage.setItem("orientquiz_admin_access", "1");
+      navigate("/admin");
+      return;
+    }
+
     setError(null);
     setLoading(true);
 
@@ -72,7 +81,7 @@ export const Landing: React.FC = () => {
       }
     }, 5000);
 
-    socket.emit("team:join", { code: teamCode.trim().toUpperCase() }, (res) => {
+    socket.emit("team:join", { code }, (res) => {
       responded = true;
       clearTimeout(timeout);
       setLoading(false);
@@ -86,7 +95,6 @@ export const Landing: React.FC = () => {
       }
     });
   };
-
 
   const copyCode = () => {
     if (createdSession) {
@@ -241,13 +249,6 @@ export const Landing: React.FC = () => {
           </div>
         </form>
       )}
-
-      {/* Footer Organizer door link */}
-      <div className="mt-8 text-center">
-        <a href="/admin" className="text-xs text-muted hover:text-ink underline">
-          Organizer Portal
-        </a>
-      </div>
     </div>
   );
 };

@@ -1,9 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { socket } from "../socket.js";
 import { PublicQuestion, TeamQuizState, TeamSession } from "@orientquiz/shared";
 import { Radio, AlertCircle, Copy, Check, Lock, Loader2 } from "lucide-react";
 import { TimerDial } from "../components/TimerDial.js";
+
+// Answer reveal color constants (only use colors defined in tailwind.config.js)
+const OPTION_CORRECT = "bg-success-soft border-success text-success font-semibold";
+const OPTION_WRONG = "bg-danger-soft border-danger text-danger font-semibold";
+const OPTION_CORRECT_HIGHLIGHT = "bg-accent-soft border-accent text-accent font-semibold"; // correct option, shown when user chose wrong
+const OPTION_LOCKED_NEUTRAL = "bg-accent-soft border-accent text-accent font-semibold";
+const OPTION_DIMMED = "bg-bg border-border text-muted opacity-60 cursor-not-allowed";
+const OPTION_DEFAULT = "bg-surface border-border text-ink hover:bg-bg active:bg-accent-soft active:border-accent";
 
 export const Team: React.FC = () => {
   const navigate = useNavigate();
@@ -13,6 +21,52 @@ export const Team: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [connected, setConnected] = useState(socket.connected);
   const [submitting, setSubmitting] = useState(false);
+
+  // Fix 2: Delayed answer reveal
+  const [revealResult, setRevealResult] = useState(false);
+  const [correctOption, setCorrectOption] = useState<number | null>(null);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fix 5: GET READY countdown
+  const [startingCountdown, setStartingCountdown] = useState<number | null>(null);
+  const startingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Fix 6: Sticky timer when scrolled out of view
+  const timerDialRef = useRef<HTMLDivElement | null>(null);
+  const [timerVisible, setTimerVisible] = useState(true);
+
+  // Track remaining ms for compact sticky timer — use ref to avoid re-rendering on every 50ms tick
+  const compactRemainingMsRef = useRef<number>(0);
+  const [compactRemainingDisplay, setCompactRemainingDisplay] = useState<number>(0);
+
+  // Memoized callback passed to TimerDial — updates ref every 50ms, but only triggers state update
+  // once per second to avoid re-rendering the whole Team page 20 times/second
+  const handleRemainingMs = useCallback((ms: number) => {
+    const prevSec = Math.ceil(compactRemainingMsRef.current / 1000);
+    const newSec = Math.ceil(ms / 1000);
+    compactRemainingMsRef.current = ms;
+    if (newSec !== prevSec) {
+      setCompactRemainingDisplay(newSec);
+    }
+  }, []);
+
+  const resetReveal = useCallback(() => {
+    if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+    setRevealResult(false);
+    setCorrectOption(null);
+  }, []);
+
+  // Fix 6: IntersectionObserver for sticky timer
+  useEffect(() => {
+    const el = timerDialRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setTimerVisible(entry.isIntersecting),
+      { threshold: 0.1 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [quizState?.status]); // re-observe when status changes (question appears)
 
   useEffect(() => {
     const savedCode = localStorage.getItem("orientquiz_team_code");
@@ -51,6 +105,8 @@ export const Team: React.FC = () => {
     };
 
     const onQuestion = (question: PublicQuestion) => {
+      resetReveal();
+      setSubmitting(false);
       setQuizState((prev) =>
         prev
           ? {
@@ -80,6 +136,32 @@ export const Team: React.FC = () => {
       setSubmitting(false);
     };
 
+    // Fix 2: Answer reveal from server (fires after timer ends)
+    const onAnswerReveal = (payload: { questionIndex: number; correctOption: number }) => {
+      setCorrectOption(payload.correctOption);
+      // Show reveal after 1.5s
+      revealTimerRef.current = setTimeout(() => {
+        setRevealResult(true);
+      }, 1500);
+    };
+
+    // Fix 5: GET READY countdown
+    const onStarting = (payload: { startsInMs: number; serverNow: number }) => {
+      let remaining = Math.ceil(payload.startsInMs / 1000);
+      setStartingCountdown(remaining);
+      if (startingTimerRef.current) clearInterval(startingTimerRef.current);
+      startingTimerRef.current = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(startingTimerRef.current!);
+          startingTimerRef.current = null;
+          setStartingCountdown(null);
+        } else {
+          setStartingCountdown(remaining);
+        }
+      }, 1000);
+    };
+
     const onInactive = (data: { reason: string }) => {
       setIsInactive(data.reason || "Session moved to another device");
     };
@@ -89,6 +171,8 @@ export const Team: React.FC = () => {
     socket.on("quiz:state", onQuizState);
     socket.on("quiz:question", onQuestion);
     socket.on("quiz:locked", onQuizLocked);
+    socket.on("quiz:answer_reveal", onAnswerReveal);
+    socket.on("quiz:starting", onStarting);
     socket.on("session:inactive", onInactive);
 
     return () => {
@@ -97,15 +181,20 @@ export const Team: React.FC = () => {
       socket.off("quiz:state", onQuizState);
       socket.off("quiz:question", onQuestion);
       socket.off("quiz:locked", onQuizLocked);
+      socket.off("quiz:answer_reveal", onAnswerReveal);
+      socket.off("quiz:starting", onStarting);
       socket.off("session:inactive", onInactive);
+      if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+      if (startingTimerRef.current) clearInterval(startingTimerRef.current);
     };
-  }, [navigate]);
+  }, [navigate, resetReveal]);
 
   const handleSelectOption = (optionIndex: number) => {
     if (!quizState?.currentQuestion || quizState.isLocked || submitting) return;
+    // Fix 1: Block selection when paused
+    if (quizState.status === "paused") return;
 
     setSubmitting(true);
-    // Immediately lock on selection
     setQuizState((prev) =>
       prev ? { ...prev, lockedOption: optionIndex, isLocked: true } : null
     );
@@ -119,7 +208,6 @@ export const Team: React.FC = () => {
       (res) => {
         setSubmitting(false);
         if (res && !res.ok) {
-          // If error from server, request state sync
           socket.emit("team:sync");
         }
       }
@@ -139,6 +227,30 @@ export const Team: React.FC = () => {
     localStorage.removeItem("orientquiz_team_id");
     localStorage.removeItem("orientquiz_team_name");
     navigate("/");
+  };
+
+  // Fix 2: Compute option styles post-reveal
+  const getOptionStyle = (i: number): string => {
+    const isSelected = quizState?.lockedOption === i;
+    const isLocked = quizState?.isLocked ?? false;
+    const isWrong = quizState?.isWrongLock ?? false;
+
+    if (revealResult && correctOption !== null) {
+      if (i === correctOption) {
+        // The correct answer — always highlight green
+        return OPTION_CORRECT;
+      }
+      if (isSelected && isWrong) {
+        // User's wrong pick — highlight red
+        return OPTION_WRONG;
+      }
+      return OPTION_DIMMED;
+    }
+
+    // Pre-reveal
+    if (isSelected) return OPTION_LOCKED_NEUTRAL; // neutral locked (no color hint)
+    if (isLocked) return OPTION_DIMMED;
+    return OPTION_DEFAULT;
   };
 
   if (isInactive) {
@@ -161,6 +273,13 @@ export const Team: React.FC = () => {
     );
   }
 
+  const isQuizActive =
+    quizState?.status === "running" ||
+    quizState?.status === "paused" ||
+    quizState?.status === "starting" ||
+    quizState?.status === "completed" ||
+    quizState?.status === "scored";
+
   return (
     <div className="min-h-screen flex flex-col p-4 max-w-md mx-auto">
       {/* Top Header */}
@@ -170,6 +289,15 @@ export const Team: React.FC = () => {
           <span className="text-base font-bold text-ink">{teamSession?.name || "Connecting…"}</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Fix 6: Compact sticky timer in header when dial is off-screen */}
+          {!timerVisible &&
+            quizState?.status === "running" &&
+            quizState.currentQuestion && (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent text-white text-xs font-mono font-bold animate-pulse">
+                <span>⏱</span>
+                <span>{compactRemainingDisplay}s</span>
+              </div>
+            )}
           {teamSession && (
             <button
               onClick={handleCopyCode}
@@ -189,8 +317,36 @@ export const Team: React.FC = () => {
 
       {/* Main Body */}
       <main className="flex-1 flex flex-col justify-center my-auto">
-        {quizState?.status === "running" && quizState.currentQuestion ? (
+        {/* Fix 5: GET READY screen */}
+        {(quizState?.status === "starting" || startingCountdown !== null) ? (
+          <div className="bg-surface border border-border rounded-card p-10 text-center">
+            <div className="w-16 h-16 rounded-full bg-accent text-white flex items-center justify-center mx-auto mb-4">
+              <Loader2 className="w-8 h-8 animate-spin" />
+            </div>
+            <h2 className="text-2xl font-extrabold text-ink mb-2 tracking-tight">GET READY!</h2>
+            <p className="text-sm text-muted mb-6">The quiz is about to begin</p>
+            <div className="inline-flex items-center justify-center w-24 h-24 rounded-full border-4 border-accent bg-accent-soft mx-auto">
+              <span className="font-mono text-5xl font-bold text-accent">
+                {startingCountdown ?? 5}
+              </span>
+            </div>
+            <p className="text-xs text-muted font-mono mt-4 uppercase tracking-widest">
+              Quiz starts in {startingCountdown ?? 5} second{(startingCountdown ?? 5) !== 1 ? "s" : ""}
+            </p>
+          </div>
+        ) : (quizState?.status === "running" || quizState?.status === "paused") &&
+          quizState.currentQuestion ? (
           <div className="bg-surface border border-border rounded-card p-5 shadow-none">
+            {/* Fix 1: Pause banner */}
+            {quizState.status === "paused" && (
+              <div className="flex items-center gap-2 justify-center mb-3 px-3 py-2 rounded-lg bg-slate-100 border border-slate-200">
+                <span className="text-base">⏸</span>
+                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                  Paused by organizer — please wait
+                </span>
+              </div>
+            )}
+
             {/* Question Progress Header */}
             <div className="flex items-center justify-between text-xs font-mono font-semibold mb-2">
               <span className="text-accent uppercase">
@@ -200,43 +356,44 @@ export const Team: React.FC = () => {
             </div>
 
             {/* Signature Stopwatch Dial Timer */}
-            <TimerDial
-              deadline={quizState.currentQuestion.deadline}
-              totalSeconds={quizState.currentQuestion.timerSeconds}
-              isPaused={false}
-            />
+            <div ref={timerDialRef}>
+              <TimerDial
+                deadline={quizState.currentQuestion.deadline}
+                totalSeconds={quizState.currentQuestion.timerSeconds}
+                isPaused={quizState.status === "paused"}
+                onRemainingMs={handleRemainingMs}
+              />
+            </div>
 
-            {/* Question Text (Body text >= 17px) */}
+            {/* Question Text */}
             <h2 className="text-[18px] font-bold text-ink leading-snug my-4 text-center">
               {quizState.currentQuestion.text}
             </h2>
 
-            {/* Options List (touch targets >= 48px) */}
+            {/* Options List */}
             <div className="space-y-2.5 mt-2">
               {quizState.currentQuestion.options.map((opt, i) => {
                 const isSelected = quizState.lockedOption === i;
-                const isWrong = isSelected && quizState.isWrongLock;
+                // Fix 1 + 2: disabled when paused OR locked
+                const isDisabled = quizState.isLocked || submitting || quizState.status === "paused";
 
                 return (
                   <button
                     key={i}
                     onClick={() => handleSelectOption(i)}
-                    disabled={quizState.isLocked || submitting}
-                    className={`w-full p-4 rounded-lg text-left text-base font-medium border transition-colors flex items-center justify-between min-h-[52px] ${
-                      isSelected
-                        ? isWrong
-                          ? "bg-danger-soft border-danger text-danger font-semibold"
-                          : "bg-accent-soft border-accent text-accent font-semibold"
-                        : quizState.isLocked
-                        ? "bg-bg border-border text-muted opacity-60 cursor-not-allowed"
-                        : "bg-surface border-border text-ink hover:bg-bg active:bg-accent-soft active:border-accent"
-                    }`}
+                    disabled={isDisabled}
+                    className={`w-full p-4 rounded-lg text-left text-base font-medium border transition-colors flex items-center justify-between min-h-[52px] ${getOptionStyle(i)}`}
                   >
                     <span className="flex-1 pr-2">{opt}</span>
-                    {isSelected && (
+                    {isSelected && !revealResult && (
                       <span className="inline-flex items-center gap-1 text-xs font-mono uppercase tracking-wider flex-shrink-0">
                         <Lock className="w-3.5 h-3.5" />
                         <span>Locked</span>
+                      </span>
+                    )}
+                    {revealResult && correctOption !== null && i === correctOption && (
+                      <span className="inline-flex items-center gap-1 text-xs font-mono uppercase tracking-wider flex-shrink-0">
+                        ✓ Correct
                       </span>
                     )}
                   </button>
@@ -245,24 +402,25 @@ export const Team: React.FC = () => {
             </div>
 
             {/* Lock notification text */}
-            {quizState.isLocked && (
+            {quizState.isLocked && !revealResult && (
               <p className="text-xs text-muted text-center mt-4 font-mono">
                 ✓ Answer locked in. Waiting for question timer to complete…
               </p>
             )}
-          </div>
-        ) : quizState?.status === "paused" && quizState.currentQuestion ? (
-          <div className="bg-surface border border-border rounded-card p-6 text-center">
-            <div className="w-12 h-12 rounded-full bg-slate-100 text-ink flex items-center justify-center mx-auto mb-3 font-mono font-bold">
-              ⏸
-            </div>
-            <h2 className="text-lg font-bold text-ink mb-1">Quiz Paused by Organizer</h2>
-            <p className="text-sm text-muted">
-              Countdown is frozen. The question will resume shortly.
-            </p>
+            {revealResult && (
+              <p className={`text-xs text-center mt-4 font-mono font-semibold ${
+                quizState.lockedOption === correctOption ? "text-success" : "text-danger"
+              }`}>
+                {quizState.lockedOption === correctOption
+                  ? "✓ Correct! Well done."
+                  : quizState.lockedOption !== null
+                  ? "✗ Incorrect. Better luck next time!"
+                  : "⏰ Time's up! No answer submitted."}
+              </p>
+            )}
           </div>
         ) : quizState?.status === "completed" || quizState?.status === "scored" ? (
-          /* Results state: shows own score ONLY — no rank, no other teams */
+          /* Results state */
           <div className="bg-surface border border-border rounded-card p-8 text-center">
             <div className="w-12 h-12 rounded-full bg-accent-soft text-accent flex items-center justify-center mx-auto mb-4 font-mono font-bold text-xl">
               ✓
@@ -282,7 +440,6 @@ export const Team: React.FC = () => {
               Thank you for playing OrientQuiz!
             </div>
           </div>
-
         ) : (
           /* Waiting / Lobby State */
           <div className="bg-surface border border-border rounded-card p-8 text-center">
@@ -298,12 +455,14 @@ export const Team: React.FC = () => {
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="py-4 text-center">
-        <button onClick={handleLeave} className="text-xs text-muted hover:text-ink">
-          Leave team
-        </button>
-      </footer>
+      {/* Fix 3: Only show Leave Team when quiz hasn't started */}
+      {!isQuizActive && (
+        <footer className="py-4 text-center">
+          <button onClick={handleLeave} className="text-xs text-muted hover:text-ink">
+            Leave team
+          </button>
+        </footer>
+      )}
     </div>
   );
 };

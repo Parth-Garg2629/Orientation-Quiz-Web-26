@@ -5,6 +5,7 @@ interface TimerDialProps {
   totalSeconds: number; // Total timer seconds for this question
   isPaused?: boolean;
   onExpire?: () => void;
+  onRemainingMs?: (ms: number) => void; // Callback to report remaining ms (for sticky header)
 }
 
 export const TimerDial: React.FC<TimerDialProps> = ({
@@ -12,6 +13,7 @@ export const TimerDial: React.FC<TimerDialProps> = ({
   totalSeconds,
   isPaused = false,
   onExpire,
+  onRemainingMs,
 }) => {
   const [remainingMs, setRemainingMs] = useState<number>(() => {
     return Math.max(0, deadline - Date.now());
@@ -23,6 +25,7 @@ export const TimerDial: React.FC<TimerDialProps> = ({
     const interval = setInterval(() => {
       const remaining = Math.max(0, deadline - Date.now());
       setRemainingMs(remaining);
+      onRemainingMs?.(remaining);
 
       if (remaining <= 0) {
         clearInterval(interval);
@@ -31,7 +34,7 @@ export const TimerDial: React.FC<TimerDialProps> = ({
     }, 50);
 
     return () => clearInterval(interval);
-  }, [deadline, isPaused, onExpire]);
+  }, [deadline, isPaused, onExpire, onRemainingMs]);
 
   const totalMs = totalSeconds * 1000;
   const fractionRemaining = totalMs > 0 ? Math.max(0, Math.min(1, remainingMs / totalMs)) : 0;

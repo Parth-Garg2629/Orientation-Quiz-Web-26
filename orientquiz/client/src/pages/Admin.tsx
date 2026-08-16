@@ -13,9 +13,10 @@ import {
   Award,
   Crown,
   Sparkles,
-  Maximize2,
-  Minimize2,
   RefreshCw,
+  Loader2,
+  List,
+  EyeOff,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 
@@ -26,11 +27,14 @@ export const Admin: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   const [adminState, setAdminState] = useState<AdminQuizState | null>(null);
-  const [isProjectorMode, setIsProjectorMode] = useState(false);
   const [overrideModal, setOverrideModal] = useState<{ teamId: string; teamName: string; currentScore: number } | null>(null);
   const [overrideDelta, setOverrideDelta] = useState<number>(0);
   const [overrideNote, setOverrideNote] = useState<string>("");
   const [fullWipeConfirm, setFullWipeConfirm] = useState(false);
+
+  // Projector control state (local — tracks what we last pushed to projector)
+  const [projectorMode, setProjectorMode] = useState<"blank" | "leaderboard" | "winners">("blank");
+  const [projectorPushing, setProjectorPushing] = useState(false);
 
   const confettiTriggered = useRef(false);
 
@@ -78,7 +82,6 @@ export const Admin: React.FC = () => {
         if (res.ok) {
           setIsAuthenticated(true);
         } else {
-          // Token expired (e.g. server restarted) — require fresh passcode
           sessionStorage.removeItem("orientquiz_admin_token");
           setIsAuthenticated(false);
         }
@@ -95,7 +98,6 @@ export const Admin: React.FC = () => {
   }, []);
 
   const triggerWinnerConfetti = () => {
-    // Single celebratory confetti burst on projector
     confetti({
       particleCount: 100,
       spread: 70,
@@ -128,7 +130,6 @@ export const Admin: React.FC = () => {
       setLoading(false);
       if (res.ok) {
         setIsAuthenticated(true);
-        // Store server-issued token — NOT the raw passcode
         if (res.token) {
           sessionStorage.setItem("orientquiz_admin_token", res.token);
         }
@@ -136,7 +137,6 @@ export const Admin: React.FC = () => {
         setError(res.error || "Incorrect passcode — please try again.");
       }
     });
-
   };
 
   const handleStart = () => socket.emit("admin:start");
@@ -144,16 +144,16 @@ export const Admin: React.FC = () => {
   const handleResume = () => socket.emit("admin:resume");
   const handleEnd = () => socket.emit("admin:end");
   const handleNext = () => socket.emit("admin:next_question");
+
   const handleLock = () => {
     const token = sessionStorage.getItem("orientquiz_admin_token");
     if (token) {
-      // Invalidate token server-side immediately
       socket.emit("admin:lock", { token });
     }
     sessionStorage.removeItem("orientquiz_admin_token");
+    sessionStorage.removeItem("orientquiz_admin_access");
     setIsAuthenticated(false);
     setAdminState(null);
-    setIsProjectorMode(false);
     setFullWipeConfirm(false);
   };
 
@@ -167,16 +167,10 @@ export const Admin: React.FC = () => {
 
   const handleHardReset = () => {
     if (!fullWipeConfirm) {
-      // Step 1: Request confirmation inline
       setFullWipeConfirm(true);
-      // Auto-revert confirmation after 6 seconds if not confirmed
-      setTimeout(() => {
-        setFullWipeConfirm(false);
-      }, 6000);
+      setTimeout(() => setFullWipeConfirm(false), 6000);
       return;
     }
-
-    // Step 2: Confirmed second tap
     socket.emit("admin:reset_quiz_full");
     setFullWipeConfirm(false);
   };
@@ -198,7 +192,21 @@ export const Admin: React.FC = () => {
     setOverrideNote("");
   };
 
-  // Passcode gate view
+  const handleProjectorPush = (mode: "blank" | "leaderboard" | "winners") => {
+    setProjectorPushing(true);
+    socket.emit("admin:projector_display", { mode }, () => {
+      setProjectorMode(mode);
+      setProjectorPushing(false);
+    });
+  };
+
+  const openProjector = () => {
+    window.open("/projector", "_blank", "noopener,noreferrer");
+  };
+
+  // -------------------------------------------------------
+  // Passcode Gate
+  // -------------------------------------------------------
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-bg">
@@ -246,139 +254,12 @@ export const Admin: React.FC = () => {
     );
   }
 
-  // Projector Fullscreen Mode
-  if (isProjectorMode) {
-    const winners = adminState?.leaderboard?.slice(0, 3) || [];
-
-    return (
-      <div className="min-h-screen bg-[#0F172A] text-white p-8 flex flex-col justify-between select-none">
-        {/* Projector Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <div>
-            <span className="text-xs font-mono tracking-widest text-indigo-400 uppercase">OFFICIAL PROJECTOR VIEW</span>
-            <h1 className="text-3xl font-bold tracking-tight mt-0.5">OrientQuiz Leaderboard</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-sm px-3 py-1 bg-slate-800 border border-slate-700 rounded-full text-slate-300">
-              STATUS: {adminState?.status.toUpperCase()}
-            </span>
-            <button
-              onClick={() => setIsProjectorMode(false)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-slate-700 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
-            >
-              <Minimize2 className="w-3.5 h-3.5" />
-              <span>Exit Projector</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Projector Body: Winner Podia / Leaderboard */}
-        <div className="my-auto py-6 max-w-5xl w-full mx-auto">
-          {adminState?.winnerRevealed && winners.length > 0 ? (
-            /* Dedicated Winner Reveal Display */
-            <div className="text-center">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-900/60 border border-indigo-500/50 rounded-full text-indigo-300 text-sm font-mono font-semibold mb-6 animate-bounce">
-                <Sparkles className="w-4 h-4 text-yellow-400" />
-                <span>OFFICIAL EVENT CHAMPIONS</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto items-end pt-4 pb-8">
-                {/* 2nd Place */}
-                {winners[1] && (
-                  <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-700 text-center order-2 md:order-1">
-                    <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-600 text-slate-300 flex items-center justify-center mx-auto mb-3 font-mono text-xl font-bold">
-                      #2
-                    </div>
-                    <h3 className="text-2xl font-bold text-white mb-1 truncate">{winners[1].name}</h3>
-                    <span className="text-xs font-mono text-slate-400 block mb-2">{winners[1].code}</span>
-                    <div className="font-mono text-3xl font-bold text-indigo-400">
-                      {winners[1].score} <span className="text-sm font-normal text-slate-400">PTS</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* 1st Place */}
-                {winners[0] && (
-                  <div className="p-8 rounded-2xl bg-indigo-950/80 border-2 border-yellow-500/80 text-center order-1 md:order-2 transform md:-translate-y-4 shadow-2xl">
-                    <div className="w-16 h-16 rounded-full bg-yellow-500/20 border-2 border-yellow-400 text-yellow-400 flex items-center justify-center mx-auto mb-4 font-mono text-3xl font-bold">
-                      <Crown className="w-8 h-8 text-yellow-400" />
-                    </div>
-                    <span className="text-xs font-mono tracking-widest text-yellow-400 uppercase font-bold block mb-1">
-                      1ST PLACE WINNER
-                    </span>
-                    <h2 className="text-3xl font-extrabold text-white mb-1 truncate">{winners[0].name}</h2>
-                    <span className="text-xs font-mono text-slate-400 block mb-3">{winners[0].code}</span>
-                    <div className="font-mono text-4xl font-extrabold text-emerald-400">
-                      {winners[0].score} <span className="text-base font-normal text-slate-400">PTS</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* 3rd Place */}
-                {winners[2] && (
-                  <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-700 text-center order-3 md:order-3">
-                    <div className="w-12 h-12 rounded-full bg-slate-800 border border-slate-600 text-amber-600 flex items-center justify-center mx-auto mb-3 font-mono text-xl font-bold">
-                      #3
-                    </div>
-                    <h3 className="text-2xl font-bold text-white mb-1 truncate">{winners[2].name}</h3>
-                    <span className="text-xs font-mono text-slate-400 block mb-2">{winners[2].code}</span>
-                    <div className="font-mono text-3xl font-bold text-indigo-400">
-                      {winners[2].score} <span className="text-sm font-normal text-slate-400">PTS</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            /* High-Contrast Projector Table */
-            <div className="space-y-3">
-              {adminState?.leaderboard && adminState.leaderboard.length > 0 ? (
-                adminState.leaderboard.slice(0, 10).map((entry, idx) => (
-                  <div
-                    key={entry.teamId}
-                    className={`flex items-center justify-between px-6 py-4 rounded-xl border ${
-                      idx === 0
-                        ? "bg-indigo-950/50 border-indigo-500/60 text-indigo-100"
-                        : idx === 1
-                        ? "bg-slate-900/90 border-slate-700 text-slate-200"
-                        : idx === 2
-                        ? "bg-slate-900/70 border-slate-800 text-slate-300"
-                        : "bg-slate-950/40 border-slate-800/80 text-slate-400"
-                    }`}
-                  >
-                    <div className="flex items-center gap-6">
-                      <span className="font-mono text-3xl font-bold w-12 text-center text-indigo-400">
-                        #{entry.rank}
-                      </span>
-                      <span className="text-2xl font-bold tracking-wide text-white">{entry.name}</span>
-                    </div>
-                    <div className="font-mono text-3xl font-bold tracking-wider text-right text-emerald-400">
-                      {entry.score} <span className="text-sm font-normal text-slate-400">PTS</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-16 text-slate-500 font-mono text-lg">
-                  Waiting for teams to submit responses…
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Projector Footer */}
-        <div className="flex justify-between items-center text-xs font-mono text-slate-500 border-t border-slate-800 pt-4">
-          <span>PROJECTOR DISPLAY MODE</span>
-          <span>ORIENTQUIZ LIVE</span>
-        </div>
-      </div>
-    );
-  }
-
+  // -------------------------------------------------------
   // Admin Control Desk
+  // -------------------------------------------------------
   return (
     <div className="min-h-screen bg-bg text-ink flex flex-col">
-      {/* Top Instrument Row */}
+      {/* Header */}
       <header className="bg-surface border-b border-border px-6 py-3 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="font-mono font-bold text-sm tracking-tight text-ink flex items-center gap-1.5">
@@ -393,11 +274,11 @@ export const Admin: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setIsProjectorMode(true)}
+            onClick={openProjector}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-surface text-xs font-medium text-ink hover:bg-bg"
           >
             <Monitor className="w-3.5 h-3.5 text-accent" />
-            <span>Open Projector View</span>
+            <span>Open Projector ↗</span>
           </button>
           <button
             onClick={handleReset}
@@ -410,7 +291,6 @@ export const Admin: React.FC = () => {
             <div className="inline-flex items-center gap-1">
               <button
                 onClick={handleHardReset}
-                title="Click to finalize full wipe (Deletes all teams)"
                 className="px-3 py-1.5 rounded-lg bg-danger text-white border border-danger text-xs font-bold animate-pulse"
               >
                 ⚠ Confirm Wipe All
@@ -439,15 +319,15 @@ export const Admin: React.FC = () => {
             <Lock className="w-3 h-3" />
             Lock
           </button>
-
         </div>
       </header>
 
-      {/* Main Admin Body */}
+      {/* Main Body */}
       <main className="flex-1 p-6 max-w-6xl w-full mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Controls & Question Status */}
+        {/* Left 2 Cols */}
         <div className="md:col-span-2 space-y-6">
-          {/* Action Control Strip */}
+
+          {/* Lifecycle Controls */}
           <div className="bg-surface border border-border rounded-card p-5 shadow-none">
             <span className="text-xs font-mono uppercase font-semibold text-muted tracking-wider block mb-3">
               LIFECYCLE CONTROLS
@@ -460,6 +340,13 @@ export const Admin: React.FC = () => {
                 >
                   <Play className="w-4 h-4" /> Start Quiz
                 </button>
+              )}
+
+              {adminState?.status === "starting" && (
+                <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-accent-soft border border-accent text-accent text-sm font-medium min-h-[44px]">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  GET READY countdown running (5s)…
+                </div>
               )}
 
               {adminState?.status === "running" && (
@@ -509,7 +396,7 @@ export const Admin: React.FC = () => {
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-success text-white text-sm font-medium min-h-[44px]"
                   >
                     <Trophy className="w-4 h-4" />
-                    {adminState.winnerRevealed ? "Hide Winner Reveal" : "Reveal Winners on Projector"}
+                    {adminState.winnerRevealed ? "Hide Winner Reveal" : "Reveal Winners (Admin View)"}
                   </button>
                   <button
                     onClick={handleReset}
@@ -519,7 +406,57 @@ export const Admin: React.FC = () => {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
 
+          {/* Projector Controls */}
+          <div className="bg-surface border border-border rounded-card p-5 shadow-none">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-mono uppercase font-semibold text-muted tracking-wider">
+                PROJECTOR CONTROLS
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${projectorMode === "blank" ? "bg-muted" : "bg-success"}`} />
+                <span className="text-xs font-mono text-muted">
+                  NOW SHOWING: <span className="text-ink font-bold uppercase">{projectorMode}</span>
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted mb-3">
+              Push what the projector screen at <code className="bg-bg px-1 rounded">/projector</code> displays — independently from this panel.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => handleProjectorPush("leaderboard")}
+                disabled={projectorPushing}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-border bg-surface text-ink text-xs font-medium hover:bg-bg min-h-[40px] disabled:opacity-50"
+              >
+                <List className="w-3.5 h-3.5 text-accent" />
+                Show Leaderboard
+              </button>
+              <button
+                onClick={() => handleProjectorPush("winners")}
+                disabled={projectorPushing}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-border bg-surface text-ink text-xs font-medium hover:bg-bg min-h-[40px] disabled:opacity-50"
+              >
+                <Crown className="w-3.5 h-3.5 text-yellow-500" />
+                Show Top 3 Winners
+              </button>
+              <button
+                onClick={() => handleProjectorPush("blank")}
+                disabled={projectorPushing || projectorMode === "blank"}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-border bg-surface text-muted text-xs font-medium hover:bg-bg min-h-[40px] disabled:opacity-50"
+              >
+                <EyeOff className="w-3.5 h-3.5" />
+                Clear Projector
+              </button>
+              <button
+                onClick={openProjector}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-hover min-h-[40px]"
+              >
+                <Monitor className="w-3.5 h-3.5" />
+                Open Projector Tab ↗
+              </button>
             </div>
           </div>
 
@@ -623,7 +560,7 @@ export const Admin: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Col: Admin Leaderboard */}
+        {/* Right Col: Leaderboard */}
         <div className="space-y-6">
           <div className="bg-surface border border-border rounded-card p-5 shadow-none">
             <div className="flex items-center justify-between border-b border-border pb-3 mb-4">

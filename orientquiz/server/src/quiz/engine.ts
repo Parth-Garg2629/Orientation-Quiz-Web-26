@@ -13,12 +13,21 @@ import {
 import { db } from "../db/index.js";
 import { calculateQuestionScore } from "./scoring.js";
 
+// Delay between question timer expiring and the next question appearing.
+// During this window the client shows the answer reveal animation.
+const ANSWER_REVEAL_DELAY_MS = 2000;
+
+// Duration of the GET READY countdown before first question.
+const STARTING_COUNTDOWN_MS = 5000;
+
 export class QuizEngine {
   private questionsData!: QuizQuestionsFile;
   private timerTimeout: NodeJS.Timeout | null = null;
-  private syncInterval: NodeJS.Timeout | null = null;
+  private advanceDelayTimeout: NodeJS.Timeout | null = null; // cancellable reveal delay
   private onStateChangeCallback?: () => void;
   private onQuestionAdvanceCallback?: (nextIndex: number) => void;
+  private onAnswerRevealCallback?: (questionIndex: number, correctOption: number) => void;
+  private onStartingCallback?: () => void;
 
   constructor() {
     this.loadQuestions();
@@ -28,9 +37,13 @@ export class QuizEngine {
   public setCallbacks(callbacks: {
     onStateChange?: () => void;
     onQuestionAdvance?: (nextIndex: number) => void;
+    onAnswerReveal?: (questionIndex: number, correctOption: number) => void;
+    onStarting?: () => void;
   }) {
     this.onStateChangeCallback = callbacks.onStateChange;
     this.onQuestionAdvanceCallback = callbacks.onQuestionAdvance;
+    this.onAnswerRevealCallback = callbacks.onAnswerReveal;
+    this.onStartingCallback = callbacks.onStarting;
   }
 
   private loadQuestions() {
@@ -54,7 +67,6 @@ export class QuizEngine {
 
   private initSession() {
     const row = db.prepare("SELECT * FROM quiz_session WHERE id = 'default'").get() as any;
-    const now = Date.now();
 
     if (!row) {
       db.prepare(`
@@ -63,14 +75,19 @@ export class QuizEngine {
       `).run(new Date().toISOString());
     } else {
       // Rehydrate in-memory timer if running
+      const now = Date.now();
       if (row.status === "running" && row.question_deadline) {
         const remaining = row.question_deadline - now;
         if (remaining > 0) {
-          this.scheduleQuestionExpiry(remaining);
+          this.scheduleQuestionExpiry(row.question_index, remaining);
         } else {
-          // Question expired during restart
           this.advanceQuestion();
         }
+      } else if (row.status === "starting") {
+        // Server restarted during countdown — just reset to waiting
+        db.prepare(`
+          UPDATE quiz_session SET status = 'waiting', updated_at = ? WHERE id = 'default'
+        `).run(new Date().toISOString());
       }
     }
   }
@@ -122,10 +139,43 @@ export class QuizEngine {
 
   public start(): { ok: boolean; error?: string } {
     const session = this.getSessionRow();
-    if (session.status !== "waiting" && session.status !== "completed" && session.status !== "scored") {
+    if (
+      session.status !== "waiting" &&
+      session.status !== "completed" &&
+      session.status !== "scored"
+    ) {
       return { ok: false, error: `Cannot start quiz from status '${session.status}'` };
     }
 
+    // Set to 'starting' for GET READY countdown
+    db.prepare(`
+      UPDATE quiz_session
+      SET status = 'starting',
+          question_index = 0,
+          question_deadline = NULL,
+          paused_at = NULL,
+          remaining_ms = NULL,
+          winner_revealed = 0,
+          updated_at = ?
+      WHERE id = 'default'
+    `).run(new Date().toISOString());
+
+    this.notifyChange();
+
+    // Fire the onStarting callback so socket layer can broadcast quiz:starting
+    if (this.onStartingCallback) {
+      this.onStartingCallback();
+    }
+
+    // After 5 seconds, begin first question
+    this.timerTimeout = setTimeout(() => {
+      this.beginFirstQuestion();
+    }, STARTING_COUNTDOWN_MS);
+
+    return { ok: true };
+  }
+
+  private beginFirstQuestion() {
     const firstQ = this.questionsData.questions[0];
     const durationMs = firstQ.timerSeconds * 1000;
     const deadline = Date.now() + durationMs;
@@ -137,14 +187,16 @@ export class QuizEngine {
           question_deadline = ?,
           paused_at = NULL,
           remaining_ms = ?,
-          winner_revealed = 0,
           updated_at = ?
       WHERE id = 'default'
     `).run(deadline, durationMs, new Date().toISOString());
 
-    this.scheduleQuestionExpiry(durationMs);
+    this.scheduleQuestionExpiry(0, durationMs);
     this.notifyChange();
-    return { ok: true };
+
+    if (this.onQuestionAdvanceCallback) {
+      this.onQuestionAdvanceCallback(0);
+    }
   }
 
   public pause(): { ok: boolean; error?: string } {
@@ -189,7 +241,7 @@ export class QuizEngine {
       WHERE id = 'default'
     `).run(newDeadline, remainingMs, new Date().toISOString());
 
-    this.scheduleQuestionExpiry(remainingMs);
+    this.scheduleQuestionExpiry(session.question_index, remainingMs);
     this.notifyChange();
     return { ok: true };
   }
@@ -201,6 +253,7 @@ export class QuizEngine {
     }
 
     this.clearTimer();
+    this.clearAdvanceDelay(); // cancel any pending question advance
 
     db.prepare(`
       UPDATE quiz_session
@@ -228,6 +281,7 @@ export class QuizEngine {
 
   public reset(): { ok: boolean; error?: string } {
     this.clearTimer();
+    this.clearAdvanceDelay(); // cancel any pending question advance
     db.prepare(`
       UPDATE quiz_session
       SET status = 'waiting',
@@ -251,6 +305,7 @@ export class QuizEngine {
 
   public hardReset(): { ok: boolean; error?: string } {
     this.clearTimer();
+    this.clearAdvanceDelay(); // cancel any pending question advance
     db.prepare(`
       UPDATE quiz_session
       SET status = 'waiting',
@@ -272,40 +327,51 @@ export class QuizEngine {
     return { ok: true };
   }
 
-
   public advanceQuestion() {
     this.clearTimer();
     const session = this.getSessionRow();
-    const nextIndex = session.question_index + 1;
+    const currentIndex = session.question_index;
+    const nextIndex = currentIndex + 1;
 
-    if (nextIndex >= this.getTotalQuestions()) {
-      this.end();
-      return;
+    // Fire answer reveal for the question that just ended
+    const currentQ = this.questionsData.questions[currentIndex];
+    if (currentQ && this.onAnswerRevealCallback) {
+      this.onAnswerRevealCallback(currentIndex, currentQ.correct);
     }
 
-    const nextQ = this.questionsData.questions[nextIndex];
-    const durationMs = nextQ.timerSeconds * 1000;
-    const deadline = Date.now() + durationMs;
+    // Delay actual advance so clients can display the reveal animation
+    // Store in advanceDelayTimeout so it can be cancelled if quiz is ended/reset
+    this.advanceDelayTimeout = setTimeout(() => {
+      this.advanceDelayTimeout = null;
+      if (nextIndex >= this.getTotalQuestions()) {
+        this.end();
+        return;
+      }
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET question_index = ?,
-          question_deadline = ?,
-          paused_at = NULL,
-          remaining_ms = ?,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(nextIndex, deadline, durationMs, new Date().toISOString());
+      const nextQ = this.questionsData.questions[nextIndex];
+      const durationMs = nextQ.timerSeconds * 1000;
+      const deadline = Date.now() + durationMs;
 
-    this.scheduleQuestionExpiry(durationMs);
-    this.notifyChange();
+      db.prepare(`
+        UPDATE quiz_session
+        SET question_index = ?,
+            question_deadline = ?,
+            paused_at = NULL,
+            remaining_ms = ?,
+            updated_at = ?
+        WHERE id = 'default'
+      `).run(nextIndex, deadline, durationMs, new Date().toISOString());
 
-    if (this.onQuestionAdvanceCallback) {
-      this.onQuestionAdvanceCallback(nextIndex);
-    }
+      this.scheduleQuestionExpiry(nextIndex, durationMs);
+      this.notifyChange();
+
+      if (this.onQuestionAdvanceCallback) {
+        this.onQuestionAdvanceCallback(nextIndex);
+      }
+    }, ANSWER_REVEAL_DELAY_MS);
   }
 
-  private scheduleQuestionExpiry(durationMs: number) {
+  private scheduleQuestionExpiry(questionIndex: number, durationMs: number) {
     this.clearTimer();
     this.timerTimeout = setTimeout(() => {
       this.advanceQuestion();
@@ -316,6 +382,13 @@ export class QuizEngine {
     if (this.timerTimeout) {
       clearTimeout(this.timerTimeout);
       this.timerTimeout = null;
+    }
+  }
+
+  private clearAdvanceDelay() {
+    if (this.advanceDelayTimeout) {
+      clearTimeout(this.advanceDelayTimeout);
+      this.advanceDelayTimeout = null;
     }
   }
 
@@ -472,9 +545,10 @@ export class QuizEngine {
       }
     }
 
-    const remainingMs = session.status === "running" && session.question_deadline
-      ? Math.max(0, session.question_deadline - now)
-      : session.remaining_ms || 0;
+    const remainingMs =
+      session.status === "running" && session.question_deadline
+        ? Math.max(0, session.question_deadline - now)
+        : session.remaining_ms || 0;
 
     const team = db.prepare("SELECT total_score FROM team WHERE id = ?").get(teamId) as any;
 
@@ -491,7 +565,7 @@ export class QuizEngine {
     };
   }
 
-  public getAdminQuizState(onlineSocketIds: Set<string>, teamSocketMap: Map<string, string>): AdminQuizState {
+  public getAdminQuizState(onlineSocketIds: Set<string>, teamSocketMap: Map<string, Set<string>>): AdminQuizState {
     const session = this.getSessionRow();
     const now = Date.now();
     const currentQ = this.getCurrentQuestion();
@@ -504,23 +578,24 @@ export class QuizEngine {
 
     const teams = db.prepare("SELECT * FROM team ORDER BY name_lower ASC").all() as any[];
     const roster: TeamRosterItem[] = teams.map((t) => {
-      const activeSock = teamSocketMap.get(t.id);
-      const isOnline = !!activeSock && onlineSocketIds.has(activeSock);
+      const activeSocks = teamSocketMap.get(t.id);
+      const isOnline = !!activeSocks && activeSocks.size > 0 && [...activeSocks].some((sid) => onlineSocketIds.has(sid));
       return {
         id: t.id,
         name: t.name,
         code: t.code,
         score: t.total_score,
         online: isOnline,
-        activeSocketId: activeSock || null,
+        activeSocketId: activeSocks ? [...activeSocks][0] || null : null,
       };
     });
 
     const leaderboard = this.getLeaderboard();
 
-    const remainingMs = session.status === "running" && session.question_deadline
-      ? Math.max(0, session.question_deadline - now)
-      : session.remaining_ms || 0;
+    const remainingMs =
+      session.status === "running" && session.question_deadline
+        ? Math.max(0, session.question_deadline - now)
+        : session.remaining_ms || 0;
 
     return {
       status: session.status,

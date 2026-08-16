@@ -18,8 +18,17 @@ import {
 export const SOCKET_ROOMS = {
   ADMIN: "room:admin",
   BROADCAST: "room:broadcast",
+  PROJECTOR: "room:projector",
   team: (teamId: string) => `team:${teamId}`,
 };
+
+export type ProjectorMode = "blank" | "leaderboard" | "winners";
+
+export interface ProjectorDisplayPayload {
+  mode: ProjectorMode;
+  leaderboard?: LeaderboardEntry[];
+  winners?: LeaderboardEntry[]; // top 3
+}
 
 export interface ServerToClientEvents {
   // Team Private & Broadcast Events
@@ -29,9 +38,14 @@ export interface ServerToClientEvents {
   "quiz:interstitial": (payload: { nextIndex: number; durationMs: number }) => void;
   "quiz:status": (payload: { status: QuizStatus; serverNow: number; deadline?: number }) => void;
   "quiz:completed": (payload: { message: string }) => void;
+  "quiz:starting": (payload: { startsInMs: number; serverNow: number }) => void;
+  "quiz:answer_reveal": (payload: { questionIndex: number; correctOption: number }) => void;
   "team:session": (session: TeamSession) => void;
   "session:inactive": (payload: { reason: string }) => void;
   "timer:sync": (payload: { serverNow: number; deadline: number; remainingMs: number }) => void;
+
+  // Projector Events (emitted to projector room)
+  "projector:display": (payload: ProjectorDisplayPayload) => void;
 
   // Admin Events (ONLY emitted to admin room)
   "admin:state": (state: AdminQuizState) => void;
@@ -52,6 +66,9 @@ export interface ClientToServerEvents {
   "team:submit": (data: SubmitAnswerInput, callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "team:sync": () => void;
 
+  // Projector Actions
+  "projector:subscribe": (callback?: (res: { ok: boolean; current?: ProjectorDisplayPayload }) => void) => void;
+
   // Admin Actions
   "admin:auth": (data: AdminAuthInput, callback: (res: { ok: boolean; error?: string; token?: string }) => void) => void;
   "admin:auth_token": (data: { token: string }, callback: (res: { ok: boolean; error?: string }) => void) => void;
@@ -66,5 +83,5 @@ export interface ClientToServerEvents {
   "admin:reset_quiz": (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "admin:reset_quiz_full": (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "admin:lock": (data: { token: string }, callback?: (res: { ok: boolean; error?: string }) => void) => void;
+  "admin:projector_display": (data: { mode: ProjectorMode }, callback?: (res: { ok: boolean; error?: string }) => void) => void;
 }
-
