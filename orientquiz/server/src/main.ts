@@ -78,3 +78,5 @@ server.listen(port, () => {
   console.log(`📊 Current Quiz Status: ${quizEngine.getStatus().toUpperCase()}`);
   console.log(`🔒 Rate limiting: 300 req/min per IP | 20 socket events/sec per socket`);
 });
+
+
