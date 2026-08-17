@@ -77,6 +77,7 @@ export interface ClientToServerEvents {
   "admin:resume": (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "admin:end": (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "admin:next_question": (callback?: (res: { ok: boolean; error?: string }) => void) => void;
+  "admin:prev_question": (callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "admin:remove_team": (data: { teamId: string }, callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "admin:override_score": (data: AdminScoreOverrideInput, callback?: (res: { ok: boolean; error?: string }) => void) => void;
   "admin:reveal_winners": (data: { reveal: boolean }, callback?: (res: { ok: boolean; error?: string }) => void) => void;

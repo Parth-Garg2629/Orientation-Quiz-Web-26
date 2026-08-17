@@ -420,25 +420,21 @@ export const Team: React.FC = () => {
             )}
           </div>
         ) : quizState?.status === "completed" || quizState?.status === "scored" ? (
-          /* Results state */
+          /* Results state — score hidden intentionally */
           <div className="bg-surface border border-border rounded-card p-8 text-center">
-            <div className="w-12 h-12 rounded-full bg-accent-soft text-accent flex items-center justify-center mx-auto mb-4 font-mono font-bold text-xl">
-              ✓
+            <div className="w-16 h-16 rounded-full bg-accent-soft text-accent flex items-center justify-center mx-auto mb-5 text-3xl">
+              🎉
             </div>
-            <h2 className="text-xl font-bold text-ink mb-2">Quiz Complete</h2>
-            {quizState.totalScore !== undefined && (
-              <div className="my-4 px-6 py-4 bg-bg border border-border rounded-xl">
-                <span className="text-xs font-mono uppercase tracking-widest text-muted block mb-1">Your Final Score</span>
-                <span className="font-mono text-4xl font-extrabold text-accent">{quizState.totalScore}</span>
-                <span className="text-sm text-muted font-mono ml-1">pts</span>
-              </div>
-            )}
-            <p className="text-sm text-muted mb-4">
-              Final standings and winners are revealed by the organizer on the room projector.
+            <h2 className="text-xl font-bold text-ink mb-2">Quiz Complete!</h2>
+            <div className="my-5 px-6 py-5 bg-bg border border-border rounded-xl">
+              <p className="text-lg font-bold text-ink leading-snug">
+                Results will be out soon!
+              </p>
+              <p className="text-sm text-muted mt-1 font-medium">Stay tuned… 👀</p>
+            </div>
+            <p className="text-xs text-muted">
+              Final standings will be announced by the organizer on the projector screen.
             </p>
-            <div className="p-3 bg-bg border border-border rounded-lg text-xs text-muted font-mono">
-              Thank you for playing OrientQuiz!
-            </div>
           </div>
         ) : (
           /* Waiting / Lobby State */
