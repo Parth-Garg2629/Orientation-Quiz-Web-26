@@ -17,8 +17,8 @@ import {
 import { db } from "../db/index.js";
 import { QuizEngine } from "../quiz/engine.js";
 
-// Max devices per team (duo match, solo allowed)
-const MAX_DEVICES_PER_TEAM = 2;
+// Only one device per team allowed
+const MAX_DEVICES_PER_TEAM = 1;
 
 // Generate unambiguous 6-char team code (no 0/O, 1/I)
 const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -332,13 +332,11 @@ export function setupSocketHandlers(
         }
       }
 
-      // Enforce duo limit: max 2 active devices
+      // Enforce single-device limit: only 1 active device per team
       if (sockets.size >= MAX_DEVICES_PER_TEAM && !sockets.has(socket.id)) {
-        // Reject the 3rd device with a clear callback error (don't emit session:inactive —
-        // that event is for kicking existing sessions, not rejecting new join attempts)
         return callback({
           ok: false,
-          error: "Team is full. Maximum 2 devices allowed per team.",
+          error: "Another device is already logged in for this team. Only one device per team is allowed.",
         });
       }
 
@@ -450,7 +448,13 @@ export function setupSocketHandlers(
 
     socket.on("admin:next_question", (callback) => {
       if (!isSocketAdmin(socket.id)) return callback?.({ ok: false, error: "Unauthorized" });
-      quizEngine.advanceQuestion();
+      quizEngine.manualAdvanceQuestion();
+      callback?.({ ok: true });
+    });
+
+    socket.on("admin:prev_question", (callback) => {
+      if (!isSocketAdmin(socket.id)) return callback?.({ ok: false, error: "Unauthorized" });
+      quizEngine.prevQuestion();
       callback?.({ ok: true });
     });
 

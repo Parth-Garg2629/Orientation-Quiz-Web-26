@@ -7,6 +7,7 @@ import {
   Pause,
   Square,
   SkipForward,
+  SkipBack,
   Trophy,
   Monitor,
   AlertCircle,
@@ -144,6 +145,7 @@ export const Admin: React.FC = () => {
   const handleResume = () => socket.emit("admin:resume");
   const handleEnd = () => socket.emit("admin:end");
   const handleNext = () => socket.emit("admin:next_question");
+  const handlePrev = () => socket.emit("admin:prev_question");
 
   const handleLock = () => {
     const token = sessionStorage.getItem("orientquiz_admin_token");
@@ -356,6 +358,14 @@ export const Admin: React.FC = () => {
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-surface text-ink text-sm font-medium hover:bg-bg min-h-[44px]"
                   >
                     <Pause className="w-4 h-4 text-muted" /> Pause
+                  </button>
+                  <button
+                    onClick={handlePrev}
+                    disabled={(adminState.currentQuestionIndex ?? 0) === 0}
+                    title="Go back to previous question"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-surface text-ink text-sm font-medium hover:bg-bg min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <SkipBack className="w-4 h-4" /> Prev Question
                   </button>
                   <button
                     onClick={handleNext}

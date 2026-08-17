@@ -371,6 +371,78 @@ export class QuizEngine {
     }, ANSWER_REVEAL_DELAY_MS);
   }
 
+  /**
+   * Manual admin advance — skips the reveal delay so question changes immediately.
+   * Used when the admin presses "Next Question" button.
+   */
+  public manualAdvanceQuestion() {
+    this.clearTimer();
+    this.clearAdvanceDelay();
+    const session = this.getSessionRow();
+    const nextIndex = session.question_index + 1;
+
+    if (nextIndex >= this.getTotalQuestions()) {
+      this.end();
+      return;
+    }
+
+    const nextQ = this.questionsData.questions[nextIndex];
+    const durationMs = nextQ.timerSeconds * 1000;
+    const deadline = Date.now() + durationMs;
+
+    db.prepare(`
+      UPDATE quiz_session
+      SET question_index = ?,
+          question_deadline = ?,
+          paused_at = NULL,
+          remaining_ms = ?,
+          updated_at = ?
+      WHERE id = 'default'
+    `).run(nextIndex, deadline, durationMs, new Date().toISOString());
+
+    this.scheduleQuestionExpiry(nextIndex, durationMs);
+    this.notifyChange();
+
+    if (this.onQuestionAdvanceCallback) {
+      this.onQuestionAdvanceCallback(nextIndex);
+    }
+  }
+
+  /**
+   * Go back to the previous question. Resets the timer for that question.
+   * Admin-only action.
+   */
+  public prevQuestion() {
+    this.clearTimer();
+    this.clearAdvanceDelay();
+    const session = this.getSessionRow();
+    const prevIndex = session.question_index - 1;
+
+    if (prevIndex < 0) return; // already at first question
+
+    const prevQ = this.questionsData.questions[prevIndex];
+    const durationMs = prevQ.timerSeconds * 1000;
+    const deadline = Date.now() + durationMs;
+
+    db.prepare(`
+      UPDATE quiz_session
+      SET question_index = ?,
+          question_deadline = ?,
+          status = 'running',
+          paused_at = NULL,
+          remaining_ms = ?,
+          updated_at = ?
+      WHERE id = 'default'
+    `).run(prevIndex, deadline, durationMs, new Date().toISOString());
+
+    this.scheduleQuestionExpiry(prevIndex, durationMs);
+    this.notifyChange();
+
+    if (this.onQuestionAdvanceCallback) {
+      this.onQuestionAdvanceCallback(prevIndex);
+    }
+  }
+
   private scheduleQuestionExpiry(questionIndex: number, durationMs: number) {
     this.clearTimer();
     this.timerTimeout = setTimeout(() => {

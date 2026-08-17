@@ -113,7 +113,20 @@ export const Landing: React.FC = () => {
           <span>Live Competition</span>
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-ink">OrientQuiz</h1>
-        <p className="text-sm text-muted mt-1">One device per team. Discuss before you lock in.</p>
+        <p className="text-sm text-muted mt-1">Join the Techknow Orientation 2026 quiz.</p>
+      </div>
+
+      {/* ⚠ Single Device Notice — shown always */}
+      <div className="w-full mb-5 px-4 py-3.5 rounded-xl bg-amber-50 border-2 border-amber-400 flex items-start gap-3">
+        <span className="text-amber-500 text-xl flex-shrink-0 mt-0.5">⚠</span>
+        <div>
+          <p className="text-sm font-extrabold text-amber-900 uppercase tracking-wide leading-snug">
+            ONE DEVICE ALLOWED ONLY
+          </p>
+          <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+            Only <strong>one device</strong> may be logged in per team at a time. Attempting to log in on a second device will be <strong>blocked</strong>. Save your team code to reconnect if you get disconnected.
+          </p>
+        </div>
       </div>
 
       {createdSession ? (
