@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { socket } from "../socket.js";
 import { PublicQuestion, TeamQuizState, TeamSession } from "@orientquiz/shared";
-import { Radio, AlertCircle, Copy, Check, Lock, Loader2 } from "lucide-react";
+import { Radio, AlertCircle, Copy, Check, Lock, Loader2, Trophy } from "lucide-react";
 import { TimerDial } from "../components/TimerDial.js";
 
 // Answer reveal color constants (only use colors defined in tailwind.config.js)
@@ -32,8 +32,22 @@ export const Team: React.FC = () => {
   const startingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fix 6: Sticky timer when scrolled out of view
-  const timerDialRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
   const [timerVisible, setTimerVisible] = useState(true);
+
+  const timerDialRef = useCallback((node: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+    }
+    if (node) {
+      const observer = new IntersectionObserver(
+        ([entry]) => setTimerVisible(entry.isIntersecting),
+        { threshold: 0.8, rootMargin: "-70px 0px 0px 0px" }
+      );
+      observer.observe(node);
+      observerRef.current = observer;
+    }
+  }, []);
 
   // Track remaining ms for compact sticky timer — use ref to avoid re-rendering on every 50ms tick
   const compactRemainingMsRef = useRef<number>(0);
@@ -56,17 +70,7 @@ export const Team: React.FC = () => {
     setCorrectOption(null);
   }, []);
 
-  // Fix 6: IntersectionObserver for sticky timer
-  useEffect(() => {
-    const el = timerDialRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => setTimerVisible(entry.isIntersecting),
-      { threshold: 0.1 }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [quizState?.status]); // re-observe when status changes (question appears)
+  // Intersection observer logic is now handled by timerDialRef callback
 
   useEffect(() => {
     const savedCode = localStorage.getItem("orientquiz_team_code");
@@ -233,18 +237,13 @@ export const Team: React.FC = () => {
   const getOptionStyle = (i: number): string => {
     const isSelected = quizState?.lockedOption === i;
     const isLocked = quizState?.isLocked ?? false;
-    const isWrong = quizState?.isWrongLock ?? false;
 
     if (revealResult && correctOption !== null) {
-      if (i === correctOption) {
-        // The correct answer — always highlight green
-        return OPTION_CORRECT;
+      if (isSelected) {
+        // Just show what they locked, don't reveal if it's correct/wrong
+        return "bg-surface border-border text-ink opacity-80 scale-[0.98]";
       }
-      if (isSelected && isWrong) {
-        // User's wrong pick — highlight red
-        return OPTION_WRONG;
-      }
-      return OPTION_DIMMED;
+      return OPTION_DEFAULT;
     }
 
     // Pre-reveal
@@ -283,7 +282,7 @@ export const Team: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col p-4 max-w-md mx-auto">
       {/* Top Header */}
-      <header className="flex items-center justify-between py-2 border-b border-border mb-4">
+      <header className="sticky top-0 z-20 bg-bg pt-4 pb-2 border-b border-border mb-4 flex items-center justify-between -mx-4 px-4">
         <div>
           <span className="text-[11px] text-muted font-mono uppercase tracking-wider block">TEAM</span>
           <span className="text-base font-bold text-ink">{teamSession?.name || "Connecting…"}</span>
@@ -293,9 +292,9 @@ export const Team: React.FC = () => {
           {!timerVisible &&
             quizState?.status === "running" &&
             quizState.currentQuestion && (
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent text-white text-xs font-mono font-bold animate-pulse">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-danger text-white text-sm font-mono font-black shadow-sm border border-red-700/50">
                 <span>⏱</span>
-                <span>{compactRemainingDisplay}s</span>
+                <span>{compactRemainingDisplay}s left</span>
               </div>
             )}
           {teamSession && (
@@ -385,15 +384,10 @@ export const Team: React.FC = () => {
                     className={`w-full p-4 rounded-lg text-left text-base font-medium border transition-colors flex items-center justify-between min-h-[52px] ${getOptionStyle(i)}`}
                   >
                     <span className="flex-1 pr-2">{opt}</span>
-                    {isSelected && !revealResult && (
+                    {isSelected && (
                       <span className="inline-flex items-center gap-1 text-xs font-mono uppercase tracking-wider flex-shrink-0">
                         <Lock className="w-3.5 h-3.5" />
                         <span>Locked</span>
-                      </span>
-                    )}
-                    {revealResult && correctOption !== null && i === correctOption && (
-                      <span className="inline-flex items-center gap-1 text-xs font-mono uppercase tracking-wider flex-shrink-0">
-                        ✓ Correct
                       </span>
                     )}
                   </button>
@@ -408,29 +402,23 @@ export const Team: React.FC = () => {
               </p>
             )}
             {revealResult && (
-              <p className={`text-xs text-center mt-4 font-mono font-semibold ${
-                quizState.lockedOption === correctOption ? "text-success" : "text-danger"
-              }`}>
-                {quizState.lockedOption === correctOption
-                  ? "✓ Correct! Well done."
-                  : quizState.lockedOption !== null
-                  ? "✗ Incorrect. Better luck next time!"
-                  : "⏰ Time's up! No answer submitted."}
+              <p className={`text-xs text-center mt-4 font-mono font-semibold`}>
+                {/* Removed the 'Correct!/Incorrect' text from bottom */}
               </p>
             )}
           </div>
         ) : quizState?.status === "completed" || quizState?.status === "scored" ? (
           /* Results state — score hidden intentionally */
           <div className="bg-surface border border-border rounded-card p-8 text-center">
-            <div className="w-16 h-16 rounded-full bg-accent-soft text-accent flex items-center justify-center mx-auto mb-5 text-3xl">
-              🎉
+            <div className="w-16 h-16 rounded-full bg-accent-soft text-accent flex items-center justify-center mx-auto mb-5">
+              <Trophy className="w-8 h-8" />
             </div>
             <h2 className="text-xl font-bold text-ink mb-2">Quiz Complete!</h2>
             <div className="my-5 px-6 py-5 bg-bg border border-border rounded-xl">
               <p className="text-lg font-bold text-ink leading-snug">
                 Results will be out soon!
               </p>
-              <p className="text-sm text-muted mt-1 font-medium">Stay tuned… 👀</p>
+              <p className="text-sm text-muted mt-1 font-medium">Stay tuned…</p>
             </div>
             <p className="text-xs text-muted">
               Final standings will be announced by the organizer on the projector screen.

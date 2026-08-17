@@ -1,136 +1,244 @@
 {
-  "title": "Technical Club Orientation Quiz 2026",
-  "description": "Fast-paced orientation quiz covering technology, logic, engineering, and club trivia.",
+  "title": "TechKnow Orientation Quiz 2026",
+  "description": "Fast-paced orientation quiz covering reality checks, club info, and executive crisis simulation.",
   "questions": [
     {
-      "text": "Which data structure uses LIFO (Last In, First Out) ordering?",
-      "options": ["Queue", "Stack", "Binary Tree", "Linked List"],
-      "correct": 1,
-      "timerSeconds": 25,
-      "points": 100,
-      "scoring": {
-        "timeWindow": 0.25,
-        "fullPointsWindow": true
-      }
-    },
-    {
-      "text": "What is the time complexity of searching for an element in a balanced Binary Search Tree?",
-      "options": ["O(1)", "O(n)", "O(log n)", "O(n log n)"],
+      "text": "You convince your parents you absolutely need a high-end, ₹1 Lakh gaming laptop for your \"engineering coursework.\" In reality, what is the most intensive task that laptop will handle in your first semester?",
+      "options": [
+        "Training complex AI models.",
+        "Running heavy 3D rendering software.",
+        "Having 40 Chrome tabs open while playing games in the back row.",
+        "Compiling an operating system from scratch."
+      ],
       "correct": 2,
-      "timerSeconds": 25,
-      "points": 100,
+      "timerSeconds": 40,
+      "points": 20,
       "scoring": {
-        "timeWindow": 0.25,
+        "timeWindow": 0,
         "fullPointsWindow": true
       }
     },
     {
-      "text": "Which git command is used to record changes to the local repository?",
-      "options": ["git push", "git commit", "git pull", "git branch"],
+      "text": "You use an AI tool to speed up writing a formal email to your professor. What is the worst possible phrase you can accidentally leave in the text before hitting send?",
+      "options": [
+        "\"Best regards,\"",
+        "\"As an AI language model, I suggest...\"",
+        "\"Sent from my iPhone\"",
+        "\"Please find attached\""
+      ],
       "correct": 1,
-      "timerSeconds": 20,
-      "points": 100,
+      "timerSeconds": 40,
+      "points": 20,
       "scoring": {
-        "timeWindow": 0.25,
+        "timeWindow": 0,
         "fullPointsWindow": true
       }
     },
     {
-      "text": "In networking, what does the HTTP status code 404 signify?",
-      "options": ["Unauthorized", "Server Error", "Not Found", "Bad Gateway"],
+      "text": "The exact moment you tell your extended family that you have joined a technical institute, what becomes your unofficial new job title at family gatherings?",
+      "options": [
+        "The Future CEO.",
+        "The person who fixes everyone's Wi-Fi router and phone storage.",
+        "The Investment Advisor.",
+        "The Software Architect."
+      ],
+      "correct": 1,
+      "timerSeconds": 40,
+      "points": 20,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "You are assigned to a random 4-person group for your very first college presentation. Statistically speaking, how is the work actually going to be divided?",
+      "options": [
+        "Everyone contributes exactly 25%.",
+        "Two people research, two people present.",
+        "Exactly one person does the entire project while the other three nod in agreement.",
+        "The professor does it for you."
+      ],
       "correct": 2,
-      "timerSeconds": 20,
-      "points": 100,
+      "timerSeconds": 40,
+      "points": 20,
       "scoring": {
-        "timeWindow": 0.25,
+        "timeWindow": 0,
         "fullPointsWindow": true
       }
     },
     {
-      "text": "Which of the following is NOT an open-source relational database management system?",
-      "options": ["PostgreSQL", "MySQL", "SQLite", "Oracle Database"],
+      "text": "We just showed you our digital footprint. What is the official website URL of the TechKnow Society?",
+      "options": [
+        "techknow.tech",
+        "techknowcouncil.com",
+        "iiitkota.tech",
+        "codebase.in"
+      ],
+      "correct": 2,
+      "timerSeconds": 40,
+      "points": 20,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "If you want to learn how to identify security vulnerabilities and explore ethical hacking, which club should you join?",
+      "options": [
+        "Cyph3r",
+        "The IT Support Desk",
+        "Codebase",
+        "ARC Robotics"
+      ],
+      "correct": 0,
+      "timerSeconds": 40,
+      "points": 20,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "Codebase organizes HackTheChain, the biggest hackathon in the city. What was the total prize pool we just presented?",
+      "options": [
+        "₹50,000",
+        "₹1 Lakh",
+        "1.6 Lakh Rupees",
+        "₹2 Lakhs"
+      ],
+      "correct": 2,
+      "timerSeconds": 40,
+      "points": 20,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "According to the TechKnow hierarchy shown on screen, which of these is an actual top-level Manager position?",
+      "options": [
+        "Operations Manager",
+        "Treasurer",
+        "Content Executive",
+        "Chief of Staff"
+      ],
+      "correct": 1,
+      "timerSeconds": 40,
+      "points": 20,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "Which club is officially described as the place where \"innovation meets engineering\" to design, build, and program machines?",
+      "options": [
+        "GDG",
+        "IIIT Kernel",
+        "ARC Robotics",
+        "Cyph3r"
+      ],
+      "correct": 2,
+      "timerSeconds": 40,
+      "points": 20,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "The Chief Guest is 45 minutes late, the stage mic just died, and the crowd of 500 is starting to get restless. What is your first move?",
+      "options": [
+        "Wait backstage and hope the mic fixes itself.",
+        "Tell the crowd there is a technical delay and ask them to wait silently.",
+        "Instantly push an interactive crowd game to the stage to keep them engaged, while silently sending one person to fix the mic.",
+        "Cancel the first 30 minutes of the show."
+      ],
+      "correct": 2,
+      "timerSeconds": 40,
+      "points": 20,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "A food vendor from last year refuses to pay our ₹5,000 sponsorship fee because they claim there was too much competition last time and they lost money. How do you secure their funds?",
+      "options": [
+        "Ask them for a smaller donation out of goodwill.",
+        "Guarantee them a \"monopoly\" by allowing only two stalls on campus, and charge a ₹3,000 advance deposit to lock their spot.",
+        "Argue with them about the footfall numbers.",
+        "Offer to put their logo on the main stage for free."
+      ],
+      "correct": 1,
+      "timerSeconds": 60,
+      "points": 60,
+      "scoring": {
+        "timeWindow": 0,
+        "fullPointsWindow": true
+      }
+    },
+    {
+      "text": "It’s 5 minutes before HackTheChain starts, and the primary coding platform completely crashes. What is your protocol?",
+      "options": [
+        "Refresh the page repeatedly and wait.",
+        "Send a message saying the server is down and to try again later.",
+        "Shift the event to tomorrow.",
+        "Post an official update on the communication channels instantly, extend the timer, and prepare a backup link."
+      ],
       "correct": 3,
-      "timerSeconds": 25,
-      "points": 100,
+      "timerSeconds": 60,
+      "points": 60,
       "scoring": {
-        "timeWindow": 0.25,
+        "timeWindow": 0,
         "fullPointsWindow": true
       }
     },
     {
-      "text": "If a triangle has sides 3, 4, and 5, what is its area?",
-      "options": ["6", "10", "12", "7.5"],
-      "correct": 0,
-      "timerSeconds": 25,
-      "points": 100,
-      "scoring": {
-        "timeWindow": 0.25,
-        "fullPointsWindow": true
-      }
-    },
-    {
-      "text": "What does CSS stand for in web development?",
-      "options": ["Creative Style Sheets", "Cascading Style Sheets", "Computer System Syntax", "Colorful Styling Script"],
+      "text": "The Event team urgently needs a ₹15,000 sound system, but the official college Note Sheet only approved ₹8,000. The event is tomorrow. What do you do?",
+      "options": [
+        "Tell the Event team to cut their requirements in half.",
+        "Negotiate a barter deal: Offer the vendor exclusive \"Official Sound Partner\" branding on the main screen in exchange for a ₹7,000 discount.",
+        "Ask the council members to pay the difference out of pocket.",
+        "Use a standard Bluetooth speaker instead."
+      ],
       "correct": 1,
-      "timerSeconds": 20,
-      "points": 100,
+      "timerSeconds": 60,
+      "points": 60,
       "scoring": {
-        "timeWindow": 0.25,
+        "timeWindow": 0,
         "fullPointsWindow": true
       }
     },
     {
-      "text": "Which algorithm is commonly used to find the shortest path in a graph with non-negative weights?",
-      "options": ["Dijkstra's Algorithm", "Kruskal's Algorithm", "Prim's Algorithm", "Floyd-Warshall Algorithm"],
+      "text": "Two of your Senior Executives are arguing backstage over whose job it is to handle sponsor check-ins. The sponsors arrive in 3 minutes. What is the call?",
+      "options": [
+        "Assign them completely separate zones immediately to protect the event timeline, and deal with the conflict tomorrow.",
+        "Mediate the argument right there until they agree.",
+        "Do the check-ins yourself to avoid drama.",
+        "Tell them both to leave the backstage area."
+      ],
       "correct": 0,
-      "timerSeconds": 30,
-      "points": 100,
+      "timerSeconds": 60,
+      "points": 60,
       "scoring": {
-        "timeWindow": 0.25,
+        "timeWindow": 0,
         "fullPointsWindow": true
       }
     },
     {
-      "text": "In computer architecture, what component performs arithmetic and logical operations?",
-      "options": ["Control Unit", "ALU", "Cache", "Register File"],
+      "text": "You pitch a GATE coaching center for sponsorship. They say, \"Your college footfall is too small, we only sponsor fests with 10,000+ crowds.\" How do you win them over?",
+      "options": [
+        "Offer them an 80% discount on the sponsorship package.",
+        "Tell them we don't have 10,000 randoms, we have a highly concentrated room of dedicated engineering students—which is their exact target demographic.",
+        "Agree with them and look for smaller sponsors.",
+        "Promise them we will make attendance mandatory for all students."
+      ],
       "correct": 1,
-      "timerSeconds": 20,
-      "points": 100,
+      "timerSeconds": 60,
+      "points": 60,
       "scoring": {
-        "timeWindow": 0.25,
-        "fullPointsWindow": true
-      }
-    },
-    {
-      "text": "What does API stand for?",
-      "options": ["Application Programming Interface", "Automated Protocol Integration", "Applied Program Instruction", "App Processing Internet"],
-      "correct": 0,
-      "timerSeconds": 20,
-      "points": 100,
-      "scoring": {
-        "timeWindow": 0.25,
-        "fullPointsWindow": true
-      }
-    },
-    {
-      "text": "What is the binary representation of the decimal number 13?",
-      "options": ["1011", "1101", "1110", "1001"],
-      "correct": 1,
-      "timerSeconds": 25,
-      "points": 100,
-      "scoring": {
-        "timeWindow": 0.25,
-        "fullPointsWindow": true
-      }
-    },
-    {
-      "text": "Which principle in OOP encourages hiding internal implementation details?",
-      "options": ["Inheritance", "Polymorphism", "Encapsulation", "Compilation"],
-      "correct": 2,
-      "timerSeconds": 25,
-      "points": 100,
-      "scoring": {
-        "timeWindow": 0.25,
+        "timeWindow": 0,
         "fullPointsWindow": true
       }
     }
