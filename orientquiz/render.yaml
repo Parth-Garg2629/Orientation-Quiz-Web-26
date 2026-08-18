@@ -17,7 +17,17 @@ services:
           name: orientquiz-db
           property: connectionString
       - key: CORS_ORIGIN
-        value: "*"
+        value: "https://orientquiz-client.onrender.com"
+
+  - type: web
+    name: orientquiz-client
+    env: static
+    rootDir: orientquiz
+    buildCommand: npm install && npm run build --workspaces
+    staticPublishPath: client/dist
+    envVars:
+      - key: VITE_SOCKET_URL
+        value: https://orientquiz-server.onrender.com
 
 databases:
   - name: orientquiz-db
