@@ -10,7 +10,7 @@ import {
   TeamQuizState,
   TeamRosterItem,
 } from "@orientquiz/shared";
-import { db } from "../db/index.js";
+import { queryOne, query, execute } from "../db/index.js";
 import { calculateQuestionScore } from "./scoring.js";
 
 // Delay between question timer expiring and the next question appearing.
@@ -20,10 +20,24 @@ const ANSWER_REVEAL_DELAY_MS = 2000;
 // Duration of the GET READY countdown before first question.
 const STARTING_COUNTDOWN_MS = 5000;
 
+// ---------------------------------------------------------------------------
+// Internal row type returned by PostgreSQL for quiz_session
+// ---------------------------------------------------------------------------
+interface SessionRow {
+  id: string;
+  status: QuizStatus;
+  question_index: number;
+  question_deadline: number | null; // stored as BIGINT → parsed to number by pg type parser
+  paused_at: number | null;
+  remaining_ms: number | null;
+  winner_revealed: boolean; // stored as BOOLEAN in Postgres
+  updated_at: string;
+}
+
 export class QuizEngine {
   private questionsData!: QuizQuestionsFile;
   private timerTimeout: NodeJS.Timeout | null = null;
-  private advanceDelayTimeout: NodeJS.Timeout | null = null; // cancellable reveal delay
+  private advanceDelayTimeout: NodeJS.Timeout | null = null;
   private onStateChangeCallback?: () => void;
   private onQuestionAdvanceCallback?: (nextIndex: number) => void;
   private onAnswerRevealCallback?: (questionIndex: number, correctOption: number) => void;
@@ -31,7 +45,7 @@ export class QuizEngine {
 
   constructor() {
     this.loadQuestions();
-    this.initSession();
+    // initSession() is now called externally from main.ts after await initDb()
   }
 
   public setCallbacks(callbacks: {
@@ -65,48 +79,56 @@ export class QuizEngine {
     console.log(`[QuizEngine] Loaded ${this.questionsData.questions.length} questions successfully.`);
   }
 
-  private initSession() {
-    const row = db.prepare("SELECT * FROM quiz_session WHERE id = 'default'").get() as any;
+  // -------------------------------------------------------------------------
+  // Session bootstrap — called once from main.ts after initDb()
+  // -------------------------------------------------------------------------
+  public async initSession(): Promise<void> {
+    const row = await queryOne<SessionRow>(
+      "SELECT * FROM quiz_session WHERE id = 'default'"
+    );
 
     if (!row) {
-      db.prepare(`
-        INSERT INTO quiz_session (id, status, question_index, question_deadline, paused_at, remaining_ms, winner_revealed, updated_at)
-        VALUES ('default', 'waiting', 0, NULL, NULL, NULL, 0, ?)
-      `).run(new Date().toISOString());
+      // First-ever boot: seed the session row
+      await execute(
+        `INSERT INTO quiz_session
+           (id, status, question_index, question_deadline, paused_at, remaining_ms, winner_revealed, updated_at)
+         VALUES ('default', 'waiting', 0, NULL, NULL, NULL, FALSE, $1)`,
+        [new Date().toISOString()]
+      );
     } else {
-      // Rehydrate in-memory timer if running
+      // Rehydrate in-memory timer if the server was restarted mid-quiz
       const now = Date.now();
       if (row.status === "running" && row.question_deadline) {
         const remaining = row.question_deadline - now;
         if (remaining > 0) {
           this.scheduleQuestionExpiry(row.question_index, remaining);
         } else {
-          this.advanceQuestion();
+          // Deadline already passed — advance immediately
+          this.advanceQuestion().catch(console.error);
         }
       } else if (row.status === "starting") {
-        // Server restarted during countdown — just reset to waiting
-        db.prepare(`
-          UPDATE quiz_session SET status = 'waiting', updated_at = ? WHERE id = 'default'
-        `).run(new Date().toISOString());
+        // Server restarted during GET READY countdown — reset to waiting
+        await execute(
+          "UPDATE quiz_session SET status = 'waiting', updated_at = $1 WHERE id = 'default'",
+          [new Date().toISOString()]
+        );
       }
     }
   }
 
-  public getSessionRow() {
-    return db.prepare("SELECT * FROM quiz_session WHERE id = 'default'").get() as {
-      id: string;
-      status: QuizStatus;
-      question_index: number;
-      question_deadline: number | null;
-      paused_at: number | null;
-      remaining_ms: number | null;
-      winner_revealed: number;
-      updated_at: string;
-    };
+  // -------------------------------------------------------------------------
+  // Session / state reads
+  // -------------------------------------------------------------------------
+  public async getSessionRow(): Promise<SessionRow> {
+    const row = await queryOne<SessionRow>(
+      "SELECT * FROM quiz_session WHERE id = 'default'"
+    );
+    if (!row) throw new Error("[QuizEngine] Quiz session row not found in database.");
+    return row;
   }
 
-  public getStatus(): QuizStatus {
-    return this.getSessionRow().status;
+  public async getStatus(): Promise<QuizStatus> {
+    return (await this.getSessionRow()).status;
   }
 
   public getQuestions() {
@@ -117,8 +139,8 @@ export class QuizEngine {
     return this.questionsData.questions.length;
   }
 
-  public getCurrentQuestion(): PublicQuestion | null {
-    const session = this.getSessionRow();
+  public async getCurrentQuestion(): Promise<PublicQuestion | null> {
+    const session = await this.getSessionRow();
     if (session.status !== "running" && session.status !== "paused") {
       return null;
     }
@@ -137,8 +159,11 @@ export class QuizEngine {
     };
   }
 
-  public start(): { ok: boolean; error?: string } {
-    const session = this.getSessionRow();
+  // -------------------------------------------------------------------------
+  // Admin controls
+  // -------------------------------------------------------------------------
+  public async start(): Promise<{ ok: boolean; error?: string }> {
+    const session = await this.getSessionRow();
     if (
       session.status !== "waiting" &&
       session.status !== "completed" &&
@@ -148,17 +173,18 @@ export class QuizEngine {
     }
 
     // Set to 'starting' for GET READY countdown
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'starting',
-          question_index = 0,
-          question_deadline = NULL,
-          paused_at = NULL,
-          remaining_ms = NULL,
-          winner_revealed = 0,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(new Date().toISOString());
+    await execute(
+      `UPDATE quiz_session
+       SET status = 'starting',
+           question_index = 0,
+           question_deadline = NULL,
+           paused_at = NULL,
+           remaining_ms = NULL,
+           winner_revealed = FALSE,
+           updated_at = $1
+       WHERE id = 'default'`,
+      [new Date().toISOString()]
+    );
 
     this.notifyChange();
 
@@ -169,27 +195,28 @@ export class QuizEngine {
 
     // After 5 seconds, begin first question
     this.timerTimeout = setTimeout(() => {
-      this.beginFirstQuestion();
+      this.beginFirstQuestion().catch(console.error);
     }, STARTING_COUNTDOWN_MS);
 
     return { ok: true };
   }
 
-  private beginFirstQuestion() {
+  private async beginFirstQuestion(): Promise<void> {
     const firstQ = this.questionsData.questions[0];
     const durationMs = firstQ.timerSeconds * 1000;
     const deadline = Date.now() + durationMs;
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'running',
-          question_index = 0,
-          question_deadline = ?,
-          paused_at = NULL,
-          remaining_ms = ?,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(deadline, durationMs, new Date().toISOString());
+    await execute(
+      `UPDATE quiz_session
+       SET status = 'running',
+           question_index = 0,
+           question_deadline = $1,
+           paused_at = NULL,
+           remaining_ms = $2,
+           updated_at = $3
+       WHERE id = 'default'`,
+      [deadline, durationMs, new Date().toISOString()]
+    );
 
     this.scheduleQuestionExpiry(0, durationMs);
     this.notifyChange();
@@ -199,8 +226,8 @@ export class QuizEngine {
     }
   }
 
-  public pause(): { ok: boolean; error?: string } {
-    const session = this.getSessionRow();
+  public async pause(): Promise<{ ok: boolean; error?: string }> {
+    const session = await this.getSessionRow();
     if (session.status !== "running") {
       return { ok: false, error: `Cannot pause quiz when status is '${session.status}'` };
     }
@@ -209,21 +236,22 @@ export class QuizEngine {
     const now = Date.now();
     const remainingMs = Math.max(0, (session.question_deadline || now) - now);
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'paused',
-          paused_at = ?,
-          remaining_ms = ?,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(now, remainingMs, new Date().toISOString());
+    await execute(
+      `UPDATE quiz_session
+       SET status = 'paused',
+           paused_at = $1,
+           remaining_ms = $2,
+           updated_at = $3
+       WHERE id = 'default'`,
+      [now, remainingMs, new Date().toISOString()]
+    );
 
     this.notifyChange();
     return { ok: true };
   }
 
-  public resume(): { ok: boolean; error?: string } {
-    const session = this.getSessionRow();
+  public async resume(): Promise<{ ok: boolean; error?: string }> {
+    const session = await this.getSessionRow();
     if (session.status !== "paused") {
       return { ok: false, error: `Cannot resume quiz when status is '${session.status}'` };
     }
@@ -231,105 +259,109 @@ export class QuizEngine {
     const remainingMs = session.remaining_ms || 10000;
     const newDeadline = Date.now() + remainingMs;
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'running',
-          question_deadline = ?,
-          paused_at = NULL,
-          remaining_ms = ?,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(newDeadline, remainingMs, new Date().toISOString());
+    await execute(
+      `UPDATE quiz_session
+       SET status = 'running',
+           question_deadline = $1,
+           paused_at = NULL,
+           remaining_ms = $2,
+           updated_at = $3
+       WHERE id = 'default'`,
+      [newDeadline, remainingMs, new Date().toISOString()]
+    );
 
     this.scheduleQuestionExpiry(session.question_index, remainingMs);
     this.notifyChange();
     return { ok: true };
   }
 
-  public end(): { ok: boolean; error?: string } {
-    const session = this.getSessionRow();
+  public async end(): Promise<{ ok: boolean; error?: string }> {
+    const session = await this.getSessionRow();
     if (session.status === "completed" || session.status === "scored") {
       return { ok: true };
     }
 
     this.clearTimer();
-    this.clearAdvanceDelay(); // cancel any pending question advance
+    this.clearAdvanceDelay();
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'completed',
-          question_deadline = NULL,
-          paused_at = NULL,
-          remaining_ms = NULL,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(new Date().toISOString());
+    await execute(
+      `UPDATE quiz_session
+       SET status = 'completed',
+           question_deadline = NULL,
+           paused_at = NULL,
+           remaining_ms = NULL,
+           updated_at = $1
+       WHERE id = 'default'`,
+      [new Date().toISOString()]
+    );
 
     // Calculate final scores
-    this.computeFinalScores();
+    await this.computeFinalScores();
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'scored',
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(new Date().toISOString());
+    await execute(
+      "UPDATE quiz_session SET status = 'scored', updated_at = $1 WHERE id = 'default'",
+      [new Date().toISOString()]
+    );
 
     this.notifyChange();
     return { ok: true };
   }
 
-  public reset(): { ok: boolean; error?: string } {
+  public async reset(): Promise<{ ok: boolean; error?: string }> {
     this.clearTimer();
-    this.clearAdvanceDelay(); // cancel any pending question advance
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'waiting',
-          question_index = 0,
-          question_deadline = NULL,
-          paused_at = NULL,
-          remaining_ms = NULL,
-          winner_revealed = 0,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(new Date().toISOString());
+    this.clearAdvanceDelay();
+
+    await execute(
+      `UPDATE quiz_session
+       SET status = 'waiting',
+           question_index = 0,
+           question_deadline = NULL,
+           paused_at = NULL,
+           remaining_ms = NULL,
+           winner_revealed = FALSE,
+           updated_at = $1
+       WHERE id = 'default'`,
+      [new Date().toISOString()]
+    );
 
     // Wipe submissions & scores; keep teams in roster
-    db.prepare("DELETE FROM submission").run();
-    db.prepare("DELETE FROM score_override").run();
-    db.prepare("UPDATE team SET total_score = 0").run();
+    await execute("DELETE FROM submission");
+    await execute("DELETE FROM score_override");
+    await execute("UPDATE team SET total_score = 0");
 
     this.notifyChange();
     return { ok: true };
   }
 
-  public hardReset(): { ok: boolean; error?: string } {
+  public async hardReset(): Promise<{ ok: boolean; error?: string }> {
     this.clearTimer();
-    this.clearAdvanceDelay(); // cancel any pending question advance
-    db.prepare(`
-      UPDATE quiz_session
-      SET status = 'waiting',
-          question_index = 0,
-          question_deadline = NULL,
-          paused_at = NULL,
-          remaining_ms = NULL,
-          winner_revealed = 0,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(new Date().toISOString());
+    this.clearAdvanceDelay();
+
+    await execute(
+      `UPDATE quiz_session
+       SET status = 'waiting',
+           question_index = 0,
+           question_deadline = NULL,
+           paused_at = NULL,
+           remaining_ms = NULL,
+           winner_revealed = FALSE,
+           updated_at = $1
+       WHERE id = 'default'`,
+      [new Date().toISOString()]
+    );
 
     // Full wipe: teams, submissions, and overrides
-    db.prepare("DELETE FROM submission").run();
-    db.prepare("DELETE FROM score_override").run();
-    db.prepare("DELETE FROM team").run();
+    await execute("DELETE FROM submission");
+    await execute("DELETE FROM score_override");
+    await execute("DELETE FROM team");
 
     this.notifyChange();
     return { ok: true };
   }
 
-  public advanceQuestion() {
+  public async advanceQuestion(): Promise<void> {
     this.clearTimer();
-    const session = this.getSessionRow();
+    const session = await this.getSessionRow();
     const currentIndex = session.question_index;
     const nextIndex = currentIndex + 1;
 
@@ -339,34 +371,39 @@ export class QuizEngine {
       this.onAnswerRevealCallback(currentIndex, currentQ.correct);
     }
 
-    // Delay actual advance so clients can display the reveal animation
-    // Store in advanceDelayTimeout so it can be cancelled if quiz is ended/reset
-    this.advanceDelayTimeout = setTimeout(() => {
+    // Delay actual advance so clients can display the reveal animation.
+    // Store in advanceDelayTimeout so it can be cancelled if quiz is ended/reset.
+    this.advanceDelayTimeout = setTimeout(async () => {
       this.advanceDelayTimeout = null;
-      if (nextIndex >= this.getTotalQuestions()) {
-        this.end();
-        return;
-      }
+      try {
+        if (nextIndex >= this.getTotalQuestions()) {
+          await this.end();
+          return;
+        }
 
-      const nextQ = this.questionsData.questions[nextIndex];
-      const durationMs = nextQ.timerSeconds * 1000;
-      const deadline = Date.now() + durationMs;
+        const nextQ = this.questionsData.questions[nextIndex];
+        const durationMs = nextQ.timerSeconds * 1000;
+        const deadline = Date.now() + durationMs;
 
-      db.prepare(`
-        UPDATE quiz_session
-        SET question_index = ?,
-            question_deadline = ?,
-            paused_at = NULL,
-            remaining_ms = ?,
-            updated_at = ?
-        WHERE id = 'default'
-      `).run(nextIndex, deadline, durationMs, new Date().toISOString());
+        await execute(
+          `UPDATE quiz_session
+           SET question_index = $1,
+               question_deadline = $2,
+               paused_at = NULL,
+               remaining_ms = $3,
+               updated_at = $4
+           WHERE id = 'default'`,
+          [nextIndex, deadline, durationMs, new Date().toISOString()]
+        );
 
-      this.scheduleQuestionExpiry(nextIndex, durationMs);
-      this.notifyChange();
+        this.scheduleQuestionExpiry(nextIndex, durationMs);
+        this.notifyChange();
 
-      if (this.onQuestionAdvanceCallback) {
-        this.onQuestionAdvanceCallback(nextIndex);
+        if (this.onQuestionAdvanceCallback) {
+          this.onQuestionAdvanceCallback(nextIndex);
+        }
+      } catch (err) {
+        console.error("[QuizEngine] Error advancing question:", err);
       }
     }, ANSWER_REVEAL_DELAY_MS);
   }
@@ -375,14 +412,14 @@ export class QuizEngine {
    * Manual admin advance — skips the reveal delay so question changes immediately.
    * Used when the admin presses "Next Question" button.
    */
-  public manualAdvanceQuestion() {
+  public async manualAdvanceQuestion(): Promise<void> {
     this.clearTimer();
     this.clearAdvanceDelay();
-    const session = this.getSessionRow();
+    const session = await this.getSessionRow();
     const nextIndex = session.question_index + 1;
 
     if (nextIndex >= this.getTotalQuestions()) {
-      this.end();
+      await this.end();
       return;
     }
 
@@ -390,15 +427,16 @@ export class QuizEngine {
     const durationMs = nextQ.timerSeconds * 1000;
     const deadline = Date.now() + durationMs;
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET question_index = ?,
-          question_deadline = ?,
-          paused_at = NULL,
-          remaining_ms = ?,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(nextIndex, deadline, durationMs, new Date().toISOString());
+    await execute(
+      `UPDATE quiz_session
+       SET question_index = $1,
+           question_deadline = $2,
+           paused_at = NULL,
+           remaining_ms = $3,
+           updated_at = $4
+       WHERE id = 'default'`,
+      [nextIndex, deadline, durationMs, new Date().toISOString()]
+    );
 
     this.scheduleQuestionExpiry(nextIndex, durationMs);
     this.notifyChange();
@@ -412,10 +450,10 @@ export class QuizEngine {
    * Go back to the previous question. Resets the timer for that question.
    * Admin-only action.
    */
-  public prevQuestion() {
+  public async prevQuestion(): Promise<void> {
     this.clearTimer();
     this.clearAdvanceDelay();
-    const session = this.getSessionRow();
+    const session = await this.getSessionRow();
     const prevIndex = session.question_index - 1;
 
     if (prevIndex < 0) return; // already at first question
@@ -424,16 +462,17 @@ export class QuizEngine {
     const durationMs = prevQ.timerSeconds * 1000;
     const deadline = Date.now() + durationMs;
 
-    db.prepare(`
-      UPDATE quiz_session
-      SET question_index = ?,
-          question_deadline = ?,
-          status = 'running',
-          paused_at = NULL,
-          remaining_ms = ?,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(prevIndex, deadline, durationMs, new Date().toISOString());
+    await execute(
+      `UPDATE quiz_session
+       SET question_index = $1,
+           question_deadline = $2,
+           status = 'running',
+           paused_at = NULL,
+           remaining_ms = $3,
+           updated_at = $4
+       WHERE id = 'default'`,
+      [prevIndex, deadline, durationMs, new Date().toISOString()]
+    );
 
     this.scheduleQuestionExpiry(prevIndex, durationMs);
     this.notifyChange();
@@ -446,7 +485,7 @@ export class QuizEngine {
   private scheduleQuestionExpiry(questionIndex: number, durationMs: number) {
     this.clearTimer();
     this.timerTimeout = setTimeout(() => {
-      this.advanceQuestion();
+      this.advanceQuestion().catch(console.error);
     }, durationMs);
   }
 
@@ -464,12 +503,15 @@ export class QuizEngine {
     }
   }
 
-  public submitAnswer(
+  // -------------------------------------------------------------------------
+  // Answer submission
+  // -------------------------------------------------------------------------
+  public async submitAnswer(
     teamId: string,
     questionIndex: number,
     selectedOption: number
-  ): { ok: boolean; isWrong?: boolean; error?: string } {
-    const session = this.getSessionRow();
+  ): Promise<{ ok: boolean; isWrong?: boolean; error?: string }> {
+    const session = await this.getSessionRow();
     if (session.status !== "running") {
       return { ok: false, error: "Quiz is not currently running" };
     }
@@ -483,17 +525,14 @@ export class QuizEngine {
       return { ok: false, error: "Question not found" };
     }
 
-    // Check if team already submitted
-    const existing = db
-      .prepare("SELECT * FROM submission WHERE team_id = ? AND question_index = ?")
-      .get(teamId, questionIndex) as any;
+    // Check if team already submitted (idempotent)
+    const existing = await queryOne<{ is_correct: boolean }>(
+      "SELECT is_correct FROM submission WHERE team_id = $1 AND question_index = $2",
+      [teamId, questionIndex]
+    );
 
     if (existing) {
-      // Idempotent: return existing lock state
-      return {
-        ok: true,
-        isWrong: existing.is_correct === 0,
-      };
+      return { ok: true, isWrong: !existing.is_correct };
     }
 
     const now = Date.now();
@@ -512,108 +551,107 @@ export class QuizEngine {
     });
 
     const subId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    db.prepare(`
-      INSERT INTO submission (id, team_id, question_index, selected_option, is_correct, points_awarded, submitted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      subId,
-      teamId,
-      questionIndex,
-      selectedOption,
-      isCorrect ? 1 : 0,
-      pointsAwarded,
-      new Date().toISOString()
+    await execute(
+      `INSERT INTO submission (id, team_id, question_index, selected_option, is_correct, points_awarded, submitted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [subId, teamId, questionIndex, selectedOption, isCorrect, pointsAwarded, new Date().toISOString()]
     );
 
-    // Update team score live
-    db.prepare(`
-      UPDATE team
-      SET total_score = (
-        SELECT COALESCE(SUM(points_awarded), 0) FROM submission WHERE team_id = ?
-      ) + (
-        SELECT COALESCE(SUM(delta), 0) FROM score_override WHERE team_id = ?
-      )
-      WHERE id = ?
-    `).run(teamId, teamId, teamId);
+    // Update team score live using a single correlated subquery
+    await execute(
+      `UPDATE team
+       SET total_score = (
+         SELECT COALESCE(SUM(points_awarded), 0) FROM submission WHERE team_id = $1
+       ) + (
+         SELECT COALESCE(SUM(delta), 0) FROM score_override WHERE team_id = $1
+       )
+       WHERE id = $1`,
+      [teamId]
+    );
 
     this.notifyChange();
     return { ok: true, isWrong: !isCorrect };
   }
 
-  public computeFinalScores() {
-    const teams = db.prepare("SELECT id FROM team").all() as { id: string }[];
-    for (const t of teams) {
-      db.prepare(`
-        UPDATE team
-        SET total_score = (
-          SELECT COALESCE(SUM(points_awarded), 0) FROM submission WHERE team_id = ?
-        ) + (
-          SELECT COALESCE(SUM(delta), 0) FROM score_override WHERE team_id = ?
-        )
-        WHERE id = ?
-      `).run(t.id, t.id, t.id);
-    }
+  public async computeFinalScores(): Promise<void> {
+    // Single UPDATE using correlated subqueries — no N+1 loop needed
+    await execute(`
+      UPDATE team
+      SET total_score = (
+        SELECT COALESCE(SUM(points_awarded), 0) FROM submission WHERE team_id = team.id
+      ) + (
+        SELECT COALESCE(SUM(delta), 0) FROM score_override WHERE team_id = team.id
+      )
+    `);
   }
 
-  public overrideScore(teamId: string, delta: number, note?: string): { ok: boolean; error?: string } {
-    const team = db.prepare("SELECT * FROM team WHERE id = ?").get(teamId) as any;
+  public async overrideScore(
+    teamId: string,
+    delta: number,
+    note?: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const team = await queryOne<{ id: string }>(
+      "SELECT id FROM team WHERE id = $1",
+      [teamId]
+    );
     if (!team) {
       return { ok: false, error: "Team not found" };
     }
 
     const overrideId = `ov_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    db.prepare(`
-      INSERT INTO score_override (id, team_id, delta, note, applied_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(overrideId, teamId, delta, note || null, new Date().toISOString());
+    await execute(
+      "INSERT INTO score_override (id, team_id, delta, note, applied_at) VALUES ($1, $2, $3, $4, $5)",
+      [overrideId, teamId, delta, note || null, new Date().toISOString()]
+    );
 
-    // Update team score
-    db.prepare(`
-      UPDATE team
-      SET total_score = total_score + ?
-      WHERE id = ?
-    `).run(delta, teamId);
+    // Update team score incrementally
+    await execute(
+      "UPDATE team SET total_score = total_score + $1 WHERE id = $2",
+      [delta, teamId]
+    );
 
     this.notifyChange();
     return { ok: true };
   }
 
-  public setWinnerRevealed(revealed: boolean) {
-    db.prepare(`
-      UPDATE quiz_session
-      SET winner_revealed = ?,
-          updated_at = ?
-      WHERE id = 'default'
-    `).run(revealed ? 1 : 0, new Date().toISOString());
-
+  public async setWinnerRevealed(revealed: boolean): Promise<void> {
+    await execute(
+      "UPDATE quiz_session SET winner_revealed = $1, updated_at = $2 WHERE id = 'default'",
+      [revealed, new Date().toISOString()]
+    );
     this.notifyChange();
   }
 
-  public getSubmissionCountForQuestion(questionIndex: number): number {
-    const row = db
-      .prepare("SELECT COUNT(*) as count FROM submission WHERE question_index = ?")
-      .get(questionIndex) as { count: number };
-    return row?.count || 0;
+  // -------------------------------------------------------------------------
+  // State projections
+  // -------------------------------------------------------------------------
+  public async getSubmissionCountForQuestion(questionIndex: number): Promise<number> {
+    const row = await queryOne<{ count: string }>(
+      "SELECT COUNT(*)::int as count FROM submission WHERE question_index = $1",
+      [questionIndex]
+    );
+    return row ? Number(row.count) : 0;
   }
 
-  public getTeamQuizState(teamId: string): TeamQuizState {
-    const session = this.getSessionRow();
+  public async getTeamQuizState(teamId: string): Promise<TeamQuizState> {
+    const session = await this.getSessionRow();
     const now = Date.now();
-    const currentQ = this.getCurrentQuestion();
+    const currentQ = await this.getCurrentQuestion();
 
     let lockedOption: number | null = null;
     let isLocked = false;
     let isWrongLock = false;
 
     if (currentQ) {
-      const sub = db
-        .prepare("SELECT * FROM submission WHERE team_id = ? AND question_index = ?")
-        .get(teamId, currentQ.index) as any;
+      const sub = await queryOne<{ selected_option: number; is_correct: boolean }>(
+        "SELECT selected_option, is_correct FROM submission WHERE team_id = $1 AND question_index = $2",
+        [teamId, currentQ.index]
+      );
 
       if (sub) {
         lockedOption = sub.selected_option;
         isLocked = true;
-        isWrongLock = sub.is_correct === 0;
+        isWrongLock = !sub.is_correct;
       }
     }
 
@@ -622,7 +660,10 @@ export class QuizEngine {
         ? Math.max(0, session.question_deadline - now)
         : session.remaining_ms || 0;
 
-    const team = db.prepare("SELECT total_score FROM team WHERE id = ?").get(teamId) as any;
+    const team = await queryOne<{ total_score: number }>(
+      "SELECT total_score FROM team WHERE id = $1",
+      [teamId]
+    );
 
     return {
       status: session.status,
@@ -637,21 +678,37 @@ export class QuizEngine {
     };
   }
 
-  public getAdminQuizState(onlineSocketIds: Set<string>, teamSocketMap: Map<string, Set<string>>): AdminQuizState {
-    const session = this.getSessionRow();
+  public async getAdminQuizState(
+    onlineSocketIds: Set<string>,
+    teamSocketMap: Map<string, Set<string>>
+  ): Promise<AdminQuizState> {
+    const session = await this.getSessionRow();
     const now = Date.now();
-    const currentQ = this.getCurrentQuestion();
-    const totalTeamsRow = db.prepare("SELECT COUNT(*) as count FROM team").get() as { count: number };
-    const totalTeams = totalTeamsRow?.count || 0;
+    const currentQ = await this.getCurrentQuestion();
+
+    const totalTeamsRow = await queryOne<{ count: string }>(
+      "SELECT COUNT(*)::int as count FROM team"
+    );
+    const totalTeams = totalTeamsRow ? Number(totalTeamsRow.count) : 0;
 
     const submissionCount = currentQ
-      ? this.getSubmissionCountForQuestion(currentQ.index)
+      ? await this.getSubmissionCountForQuestion(currentQ.index)
       : 0;
 
-    const teams = db.prepare("SELECT * FROM team ORDER BY name_lower ASC").all() as any[];
+    const teams = await query<{
+      id: string;
+      name: string;
+      name_lower: string;
+      code: string;
+      total_score: number;
+    }>("SELECT * FROM team ORDER BY name_lower ASC");
+
     const roster: TeamRosterItem[] = teams.map((t) => {
       const activeSocks = teamSocketMap.get(t.id);
-      const isOnline = !!activeSocks && activeSocks.size > 0 && [...activeSocks].some((sid) => onlineSocketIds.has(sid));
+      const isOnline =
+        !!activeSocks &&
+        activeSocks.size > 0 &&
+        [...activeSocks].some((sid) => onlineSocketIds.has(sid));
       return {
         id: t.id,
         name: t.name,
@@ -662,7 +719,7 @@ export class QuizEngine {
       };
     });
 
-    const leaderboard = this.getLeaderboard();
+    const leaderboard = await this.getLeaderboard();
 
     const remainingMs =
       session.status === "running" && session.question_deadline
@@ -681,14 +738,19 @@ export class QuizEngine {
       totalTeams,
       teams: roster,
       leaderboard,
-      winnerRevealed: session.winner_revealed === 1,
+      winnerRevealed: !!session.winner_revealed,
     };
   }
 
-  public getLeaderboard(): LeaderboardEntry[] {
-    const teams = db
-      .prepare("SELECT id, name, code, total_score FROM team ORDER BY total_score DESC, name_lower ASC")
-      .all() as any[];
+  public async getLeaderboard(): Promise<LeaderboardEntry[]> {
+    const teams = await query<{
+      id: string;
+      name: string;
+      code: string;
+      total_score: number;
+    }>(
+      "SELECT id, name, code, total_score FROM team ORDER BY total_score DESC, name_lower ASC"
+    );
 
     return teams.map((t, idx) => ({
       rank: idx + 1,

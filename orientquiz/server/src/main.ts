@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import { Server } from "socket.io";
 import bcrypt from "bcryptjs";
 import { ClientToServerEvents, ServerToClientEvents } from "@orientquiz/shared";
+import { initDb } from "./db/index.js";
 import { QuizEngine } from "./quiz/engine.js";
 import { setupSocketHandlers } from "./socket/index.js";
 
@@ -69,14 +70,29 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
   },
 });
 
-// Initialize Quiz Engine and Socket Handlers
-const quizEngine = new QuizEngine();
-setupSocketHandlers(io, quizEngine, adminPasscodeHash);
+// Initialise database tables, then boot the quiz engine, then start listening.
+// Must happen in this order: tables exist → session row → socket handlers.
+async function bootstrap() {
+  try {
+    // 1. Create tables (idempotent — safe to run on every boot)
+    await initDb();
 
-server.listen(port, () => {
-  console.log(`🚀 [OrientQuiz Server] Running on http://localhost:${port}`);
-  console.log(`📊 Current Quiz Status: ${quizEngine.getStatus().toUpperCase()}`);
-  console.log(`🔒 Rate limiting: 300 req/min per IP | 20 socket events/sec per socket`);
-});
+    // 2. Load questions from disk & seed / rehydrate the session row
+    const quizEngine = new QuizEngine();
+    await quizEngine.initSession();
 
+    // 3. Wire up all socket event handlers
+    setupSocketHandlers(io, quizEngine, adminPasscodeHash);
 
+    // 4. Start HTTP + WebSocket server
+    server.listen(port, () => {
+      console.log(`🚀 [OrientQuiz Server] Running on http://localhost:${port}`);
+      console.log(`🔒 Rate limiting: 300 req/min per IP | 20 socket events/sec per socket`);
+    });
+  } catch (err) {
+    console.error("❌ [Server] Fatal error during bootstrap:", err);
+    process.exit(1);
+  }
+}
+
+bootstrap();
