@@ -2,6 +2,7 @@ services:
   - type: web
     name: orientquiz-server
     runtime: docker
+    rootDir: orientquiz
     dockerfilePath: Dockerfile
     plan: free
     envVars:
