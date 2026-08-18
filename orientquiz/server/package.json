@@ -15,7 +15,6 @@
     "test:reliability": "tsx src/tests/reliability.test.ts"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.4",
     "@orientquiz/shared": "*",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
@@ -23,6 +22,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.2",
+    "pg": "^8.13.3",
     "socket.io": "^4.7.5",
     "zod": "^3.23.8"
   },
@@ -30,6 +30,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.9",
+    "@types/pg": "^8.11.11",
     "tsx": "^4.16.2",
     "typescript": "^5.4.5"
   }

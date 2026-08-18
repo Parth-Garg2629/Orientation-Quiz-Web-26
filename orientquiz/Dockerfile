@@ -24,7 +24,7 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
-ENV DATABASE_PATH=/data/quiz.db
+# DATABASE_URL is injected by Render at runtime — no default here
 
 COPY package*.json ./
 COPY shared/package*.json ./shared/
@@ -35,9 +35,6 @@ RUN npm ci --omit=dev
 COPY --from=base /app/shared/dist ./shared/dist
 COPY --from=base /app/server/dist ./server/dist
 COPY server/config ./server/config
-
-# Create volume mount point for persistent SQLite disk
-VOLUME ["/data"]
 
 EXPOSE 3001
 
