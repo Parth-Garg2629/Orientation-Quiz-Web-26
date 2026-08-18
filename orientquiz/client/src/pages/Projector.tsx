@@ -176,12 +176,11 @@ const LeaderboardDisplay: React.FC<{ leaderboard: LeaderboardEntry[] }> = ({ lea
 };
 
 // ---------------------------------------------------------
-// Winners Podium Display — top 3 with name + points
+// Winners Podium Display — top 2 with name + points
 // ---------------------------------------------------------
 const WinnersDisplay: React.FC<{ winners: LeaderboardEntry[] }> = ({ winners }) => {
   const first = winners[0];
   const second = winners[1];
-  const third = winners[2];
 
   return (
     <div className="w-full max-w-5xl text-center">
@@ -194,8 +193,8 @@ const WinnersDisplay: React.FC<{ winners: LeaderboardEntry[] }> = ({ winners }) 
         <Crown className="w-5 h-5 text-yellow-400" />
       </div>
 
-      {/* Podium — order: 2nd | 1st | 3rd */}
-      <div className="grid grid-cols-3 gap-5 items-end">
+      {/* Podium — order: 2nd | 1st */}
+      <div className="grid grid-cols-2 max-w-2xl mx-auto gap-8 items-end">
         {/* 2nd Place */}
         <div className="flex flex-col items-center">
           <PodiumCard
@@ -226,22 +225,6 @@ const WinnersDisplay: React.FC<{ winners: LeaderboardEntry[] }> = ({ winners }) 
           />
           <div className="w-full h-32 mt-3 bg-indigo-900/40 border border-indigo-700/40 border-b-0 rounded-t-xl flex items-center justify-center">
             <span className="font-mono text-6xl font-black text-indigo-400/80">1</span>
-          </div>
-        </div>
-
-        {/* 3rd Place */}
-        <div className="flex flex-col items-center">
-          <PodiumCard
-            rank={3}
-            entry={third}
-            accentClass="bg-slate-800/50 border-amber-700/40"
-            rankColor="text-amber-500"
-            badgeClass="bg-amber-900/30 border-amber-700/60 text-amber-400"
-            scoreClass="text-amber-400"
-            cardHeight="h-36"
-          />
-          <div className="w-full h-12 mt-3 bg-slate-800/40 border border-slate-700/40 border-b-0 rounded-t-xl flex items-center justify-center">
-            <span className="font-mono text-4xl font-black text-amber-800/70">3</span>
           </div>
         </div>
       </div>

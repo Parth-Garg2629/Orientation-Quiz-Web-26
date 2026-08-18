@@ -450,7 +450,7 @@ export const Admin: React.FC = () => {
                 className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-border bg-surface text-ink text-xs font-medium hover:bg-bg min-h-[40px] disabled:opacity-50"
               >
                 <Crown className="w-3.5 h-3.5 text-yellow-500" />
-                Show Top 3 Winners
+                Show Top 2 Winners
               </button>
               <button
                 onClick={() => handleProjectorPush("blank")}
