@@ -23,11 +23,15 @@ services:
     name: orientquiz-client
     env: static
     rootDir: orientquiz
-    buildCommand: npm install && npm run build --workspaces
+    buildCommand: npm install && npm run build --workspace=@orientquiz/shared && npm run build --workspace=client
     staticPublishPath: client/dist
     envVars:
       - key: VITE_SOCKET_URL
         value: https://orientquiz-server.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
 
 databases:
   - name: orientquiz-db
