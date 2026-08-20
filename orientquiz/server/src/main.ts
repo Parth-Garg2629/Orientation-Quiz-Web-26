@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import http from "node:http";
 import express from "express";
 import cors from "cors";
@@ -10,8 +10,8 @@ import { initDb } from "./db/index.js";
 import { QuizEngine } from "./quiz/engine.js";
 import { setupSocketHandlers } from "./socket/index.js";
 
-// Load .env
-dotenv.config();
+// .env is now loaded automatically by the import above
+
 
 const port = Number(process.env.PORT) || 3001;
 const rawPasscode = process.env.ADMIN_PASSCODE;
